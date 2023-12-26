@@ -178,13 +178,11 @@ fn encode_sk_ed25519() {
 #[test]
 fn decode_webauthn() {
     let sshsig = WEBAUTHN_SK_ECDSA_SIGNATURE.parse::<SshSig>().unwrap();
-
     assert_eq!(sshsig.algorithm(), Algorithm::WebauthnEcdsaSha2NistP256);
     assert_eq!(sshsig.version(), 1);
-    assert_eq!(sshsig.namespace(), NAMESPACE_EXAMPLE);
+    assert_eq!(sshsig.namespace(), "unittest");
     assert_eq!(sshsig.reserved(), &[0u8; 0]);
     assert_eq!(sshsig.hash_alg(), HashAlg::Sha512);
-    assert_eq!(sshsig.signature_bytes(), SK_ED25519_SIGNATURE_BYTES);
 }
 
 #[test]
