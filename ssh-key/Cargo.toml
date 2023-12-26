@@ -37,8 +37,10 @@ p521 = { version = "=0.14.0-pre.1", optional = true, default-features = false, f
 rand_core = { version = "0.6.4", optional = true, default-features = false }
 rsa = { version = "=0.10.0-pre.3", optional = true, default-features = false, features = ["sha2"] }
 sec1 = { version = "0.8.0-rc.3", optional = true, default-features = false, features = ["point"] }
-serde = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 sha1 = { version = "=0.11.0-pre.4", optional = true, default-features = false }
+serde_json = { version = "1.0.108", optional = true }
+base64ct = { version = "1.6.0", features = ["std"], optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -65,6 +67,7 @@ std = [
 crypto = ["ed25519", "p256", "p384", "p521", "rsa"] # NOTE: `dsa` is obsolete/weak
 dsa = ["dep:bigint", "dep:dsa", "dep:sha1", "alloc", "signature/rand_core"]
 ecdsa = ["dep:sec1"]
+webauthn = ["p256", "alloc", "dep:serde", "dep:serde_json", "dep:base64ct"]
 ed25519 = ["dep:ed25519-dalek", "rand_core"]
 encryption = [
     "dep:bcrypt-pbkdf",

@@ -1,9 +1,14 @@
 //! Signatures (e.g. CA signatures over SSH certificates)
 
 use crate::{private, public, Algorithm, EcdsaCurve, Error, Mpint, PrivateKey, PublicKey, Result};
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
-use core::fmt;
+#[cfg(feature = "webauthn")]
+use base64ct::{Base64UrlUnpadded, Encoding};
+use core::fmt::{self, write, Display};
 use encoding::{CheckedSum, Decode, Encode, Reader, Writer};
+#[cfg(feature = "webauthn")]
+use serde::Deserialize;
 use signature::{SignatureEncoding, Signer, Verifier};
 
 #[cfg(feature = "ed25519")]
@@ -171,20 +176,137 @@ impl AsRef<[u8]> for Signature {
     }
 }
 
+#[cfg(feature = "webauthn")]
+#[derive(Debug)]
+pub(crate) struct WebauthnSignatureData {
+    pub flags: u8,
+    pub counter: u32,
+    pub origin: Vec<u8>,
+    pub client_data: Vec<u8>,
+    pub extensions: Option<Vec<u8>>,
+}
+
+#[cfg(feature = "webauthn")]
+impl Decode for WebauthnSignatureData {
+    type Error = <Vec<u8> as Decode>::Error;
+
+    fn decode(reader: &mut impl Reader) -> core::result::Result<Self, Self::Error> {
+        let flags = u8::decode(reader)?;
+        let has_extensions = flags >> 7 & 0x1 == 1;
+        Ok(Self {
+            flags,
+            counter: u32::decode(reader)?,
+            origin: Vec::<u8>::decode(reader)?,
+            client_data: Vec::<u8>::decode(reader)?,
+            extensions: Some(Vec::<u8>::decode(reader)?).filter(|_| has_extensions),
+        })
+    }
+}
+
+#[cfg(feature = "webauthn")]
+impl Encode for WebauthnSignatureData {
+    fn encoded_len(&self) -> core::result::Result<usize, encoding::Error> {
+        [
+            self.flags.encoded_len()?,
+            self.counter.encoded_len()?,
+            self.origin.encoded_len()?,
+            self.client_data.encoded_len()?,
+            self.extensions
+                .as_ref()
+                .map(|extensions| extensions.encoded_len())
+                .unwrap_or_else(|| Vec::<u8>::new().encoded_len())?,
+        ]
+        .checked_sum()
+    }
+
+    fn encode(&self, writer: &mut impl Writer) -> core::result::Result<(), encoding::Error> {
+        self.flags.encode(writer)?;
+        self.counter.encode(writer)?;
+        self.origin.encode(writer)?;
+        self.client_data.encode(writer)?;
+        self.extensions
+            .as_deref()
+            .unwrap_or_default()
+            .encode(writer)
+    }
+}
+
+#[cfg(feature = "webauthn")]
+impl WebauthnSignatureData {
+    pub fn parse_signature(
+        sig: &Signature,
+    ) -> core::result::Result<(Vec<u8>, Self), <Self as Decode>::Error> {
+        let mut reader = &sig.data[..];
+        let sig_bytes = Vec::<u8>::decode(&mut reader)?;
+        let webauthn_data = WebauthnSignatureData::decode(&mut reader)?;
+        Ok((sig_bytes, webauthn_data))
+    }
+
+    pub fn application(&self) -> &[u8] {
+        &self.origin
+    }
+
+    pub fn challenge(&self) -> core::result::Result<Vec<u8>, signature::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "webauthn.get", tag = "type")]
+        struct ClientData<'a> {
+            // TODO: check origin
+            origin: &'a str,
+            challenge: &'a str,
+        }
+        let ClientData { origin, challenge } =
+            serde_json::from_slice(&self.client_data).map_err(signature::Error::from_source)?;
+
+        let decoded_challenge =
+            Base64UrlUnpadded::decode_vec(challenge).map_err(signature::Error::from_source)?;
+        Ok(decoded_challenge)
+    }
+
+    pub fn signed_data(&self, message: &[u8]) -> core::result::Result<Vec<u8>, signature::Error> {
+        let challenge = self.challenge();
+        let Self {
+            flags,
+            counter,
+            origin,
+            client_data,
+            extensions,
+        } = self;
+        #[allow(clippy::integer_arithmetic)]
+        let mut signed_data =
+            Vec::with_capacity((2 * Sha256::output_size()) + SK_SIGNATURE_TRAILER_SIZE);
+        signed_data.extend(Sha256::digest(self.application()));
+        flags.encode(&mut signed_data);
+        counter.encode(&mut signed_data);
+        if let Some(extensions) = extensions {
+            // only encode extensions if their presence is indicated by bit 7
+            extensions.encode(&mut signed_data);
+        }
+        signed_data.extend(Sha256::digest(client_data));
+        Ok(signed_data)
+    }
+}
+
 impl Decode for Signature {
     type Error = Error;
 
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         let algorithm = Algorithm::decode(reader)?;
         let mut data = Vec::decode(reader)?;
+                std::dbg!(&algorithm);
+        match algorithm {
+            Algorithm::SkEd25519 | Algorithm::SkEcdsaSha2NistP256 => {
+                let flags = u8::decode(reader)?;
+                let counter = u32::decode(reader)?;
 
-        if algorithm == Algorithm::SkEd25519 || algorithm == Algorithm::SkEcdsaSha2NistP256 {
-            let flags = u8::decode(reader)?;
-            let counter = u32::decode(reader)?;
-
-            data.push(flags);
-            data.extend(counter.to_be_bytes());
-        }
+                data.push(flags);
+                data.extend(counter.to_be_bytes());
+            }
+            #[cfg(feature = "webauthn")]
+            Algorithm::WebauthnEcdsaSha2NistP256 => {
+                WebauthnSignatureData::decode(reader)?.encode(&mut data)?;
+            }
+            _ => (),
+        };
         Self::new(algorithm, data)
     }
 }
@@ -626,7 +748,12 @@ impl Signer<Signature> for EcdsaKeypair {
     }
 }
 
-#[cfg(any(feature = "p256", feature = "p384", feature = "p521"))]
+#[cfg(any(
+    feature = "webauthn",
+    feature = "p256",
+    feature = "p384",
+    feature = "p521"
+))]
 impl Verifier<Signature> for EcdsaPublicKey {
     fn verify(&self, message: &[u8], signature: &Signature) -> signature::Result<()> {
         match signature.algorithm {
@@ -655,6 +782,14 @@ impl Verifier<Signature> for EcdsaPublicKey {
                 #[cfg(not(all(feature = "p256", feature = "p384", feature = "p521")))]
                 _ => Err(signature.algorithm().unsupported_error().into()),
             },
+            #[cfg(feature = "webauthn")]
+            Algorithm::WebauthnEcdsaSha2NistP256 => {
+                let verifying_key = p256::ecdsa::VerifyingKey::try_from(self)?;
+                let (_, webauthn_data) = WebauthnSignatureData::parse_signature(signature)
+                    .map_err(signature::Error::from_source)?;
+                let signature = p256::ecdsa::Signature::try_from(signature)?;
+                verifying_key.verify(&webauthn_data.signed_data(message)?, &signature)
+            }
             _ => Err(signature.algorithm().unsupported_error().into()),
         }
     }
@@ -719,6 +854,7 @@ mod tests {
     const ECDSA_SHA2_P256_SIGNATURE: &[u8] = &hex!("0000001365636473612d736861322d6e6973747032353600000048000000201298ab320720a32139cda8a40c97a13dc54ce032ea3c6f09ea9e87501e48fa1d0000002046e4ac697a6424a9870b9ef04ca1182cd741965f989bd1f1f4a26fd83cf70348");
     const ED25519_SIGNATURE: &[u8] = &hex!("0000000b7373682d65643235353139000000403d6b9906b76875aef1e7b2f1e02078a94f439aebb9a4734da1a851a81e22ce0199bbf820387a8de9c834c9c3cc778d9972dcbe70f68d53cc6bc9e26b02b46d04");
     const SK_ED25519_SIGNATURE: &[u8] = &hex!("0000001a736b2d7373682d65643235353139406f70656e7373682e636f6d000000402f5670b6f93465d17423878a74084bf331767031ed240c627c8eb79ab8fa1b935a1fd993f52f5a13fec1797f8a434f943a6096246aea8dd5c8aa922cba3d95060100000009");
+    const WEBAUTHN_SK_ECDSA_SHA2_P256_SIGNATURE: &[u8] = &hex!("");
     const RSA_SHA512_SIGNATURE: &[u8] = &hex!("0000000c7273612d736861322d3531320000018085a4ad1a91a62c00c85de7bb511f38088ff2bce763d76f4786febbe55d47624f9e2cffce58a680183b9ad162c7f0191ea26cab001ac5f5055743eced58e9981789305c208fc98d2657954e38eb28c7e7f3fbe92393a14324ed77aebb772a41aa7a107b38cb9bd1d9ad79b275135d1d7e019bb1d56d74f2450be6db0771f48f6707d3fcf9789592ca2e55595acc16b6e8d0139b56c5d1360b3a1e060f4151a3d7841df2c2a8c94d6f8a1bf633165ee0bcadac5642763df0dd79d3235ae5506595145f199d8abe8f9980411bf70a16e30f273736324d047043317044c36374d6a5ed34cac251e01c6795e4578393f9090bf4ae3e74a0009275a197315fc9c62f1c9aec1ba3b2d37c3b207e5500df19e090e7097ebc038fb9c9e35aea9161479ba6b5190f48e89e1abe51e8ec0e120ef89776e129687ca52d1892c8e88e6ef062a7d96b8a87682ca6a42ff1df0cdf5815c3645aeed7267ca7093043db0565e0f109b796bf117b9d2bb6d6debc0c67a4c9fb3aae3e29b00c7bd70f6c11cf53c295ff");
 
     /// Example test vector for signing.
@@ -789,6 +925,13 @@ mod tests {
         let signature = Signature::try_from(SK_ED25519_SIGNATURE).unwrap();
         assert_eq!(Algorithm::SkEd25519, signature.algorithm());
     }
+
+    //  #[cfg(feature = "webauthn")]
+    //  #[test]
+    //  fn decode_webauthn_signature() {
+    //      let signature = Signature::try_from(WEBAUTHN_SK_ECDSA_SHA2_P256_SIGNATURE).unwrap();
+    //      assert_eq!(Algorithm::WebauthnEcdsaSha2NistP256, signature.algorithm);
+    //  }
 
     #[test]
     fn decode_rsa() {
