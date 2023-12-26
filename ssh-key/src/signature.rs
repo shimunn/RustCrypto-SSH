@@ -118,6 +118,7 @@ impl Signature {
             Algorithm::SkEcdsaSha2NistP256 => ecdsa_sig_size(&data, EcdsaCurve::NistP256, true)?,
             Algorithm::Rsa { .. } => (),
             Algorithm::Other(_) if !data.is_empty() => (),
+            Algorithm::Other(_) | Algorithm::WebauthnEcdsaSha2NistP256 if !data.is_empty() => (),
             _ => return Err(encoding::Error::Length.into()),
         }
 
@@ -212,9 +213,9 @@ impl Encode for WebauthnSignatureData {
             self.origin.encoded_len()?,
             self.client_data.encoded_len()?,
             self.extensions
-                .as_ref()
-                .map(|extensions| extensions.encoded_len())
-                .unwrap_or_else(|| Vec::<u8>::new().encoded_len())?,
+                .as_deref()
+                .unwrap_or_default()
+                .encoded_len()?,
         ]
         .checked_sum()
     }
@@ -227,7 +228,8 @@ impl Encode for WebauthnSignatureData {
         self.extensions
             .as_deref()
             .unwrap_or_default()
-            .encode(writer)
+            .encode(writer)?;
+        Ok(())
     }
 }
 
@@ -292,7 +294,6 @@ impl Decode for Signature {
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         let algorithm = Algorithm::decode(reader)?;
         let mut data = Vec::decode(reader)?;
-                std::dbg!(&algorithm);
         match algorithm {
             Algorithm::SkEd25519 | Algorithm::SkEcdsaSha2NistP256 => {
                 let flags = u8::decode(reader)?;
@@ -303,7 +304,8 @@ impl Decode for Signature {
             }
             #[cfg(feature = "webauthn")]
             Algorithm::WebauthnEcdsaSha2NistP256 => {
-                WebauthnSignatureData::decode(reader)?.encode(&mut data)?;
+                let wa_data = WebauthnSignatureData::decode(reader)?;
+                wa_data.encode(&mut data)?;
             }
             _ => (),
         };
