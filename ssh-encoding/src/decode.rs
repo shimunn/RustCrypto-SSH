@@ -146,7 +146,9 @@ impl Decode for Vec<u8> {
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         reader.read_prefixed(|reader| {
             let mut result = vec![0u8; reader.remaining_len()];
-            reader.read(&mut result)?;
+            if result.capacity() > 0 {
+                reader.read(&mut result)?;
+            }
             Ok(result)
         })
     }
