@@ -128,10 +128,7 @@ pub enum Algorithm {
     SkEd25519,
 
     /// Webauthn
-    Webauthn {
-        /// Elliptic curve with which to instantiate ECDSA.
-        curve: EcdsaCurve,
-    },
+    WebauthnEcdsaSha2NistP256,
 
     /// Other
     #[cfg(feature = "alloc")]
@@ -172,7 +169,7 @@ impl Algorithm {
     /// - `ssh-ed25519-cert-v01@openssh.com`
     /// - `sk-ecdsa-sha2-nistp256-cert-v01@openssh.com` (FIDO/U2F key)
     /// - `sk-ssh-ed25519-cert-v01@openssh.com` (FIDO/U2F key)
-    /// - `webauthn-sk-ecdsa-sha2-nistp256-cert-v01@openssh.com` (Browser generated)
+    /// - `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` (Browser generated)
     ///
     /// Any other algorithms are mapped to the [`Algorithm::Other`] variant.
     ///
@@ -193,9 +190,7 @@ impl Algorithm {
             CERT_RSA => Ok(Algorithm::Rsa { hash: None }),
             CERT_SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
             CERT_SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
-            CERT_WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::Webauthn {
-                curve: EcdsaCurve::NistP256,
-            }),
+            CERT_WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::WebauthnEcdsaSha2NistP256),
             #[cfg(feature = "alloc")]
             _ => Ok(Algorithm::Other(AlgorithmName::from_certificate_type(id)?)),
             #[cfg(not(feature = "alloc"))]
@@ -220,10 +215,7 @@ impl Algorithm {
             },
             Algorithm::SkEcdsaSha2NistP256 => SK_ECDSA_SHA2_P256,
             Algorithm::SkEd25519 => SK_SSH_ED25519,
-            Algorithm::Webauthn { curve } => match curve {
-                EcdsaCurve::NistP256 => WEBAUTHN_SK_ECDSA_SHA2_P256,
-                _ => todo!(),
-            },
+            Algorithm::WebauthnEcdsaSha2NistP256 => WEBAUTHN_SK_ECDSA_SHA2_P256,
             #[cfg(feature = "alloc")]
             Algorithm::Other(algorithm) => algorithm.as_str(),
         }
@@ -249,10 +241,7 @@ impl Algorithm {
             Algorithm::Rsa { .. } => CERT_RSA,
             Algorithm::SkEcdsaSha2NistP256 => CERT_SK_ECDSA_SHA2_P256,
             Algorithm::SkEd25519 => CERT_SK_SSH_ED25519,
-            Algorithm::Webauthn { curve } => match curve {
-                EcdsaCurve::NistP256 => CERT_WEBAUTHN_SK_ECDSA_SHA2_P256,
-                _ => todo!(),
-            },
+            Algorithm::WebauthnEcdsaSha2NistP256 => CERT_WEBAUTHN_SK_ECDSA_SHA2_P256,
             Algorithm::Other(algorithm) => return algorithm.certificate_type(),
         }
         .to_owned()
@@ -324,6 +313,7 @@ impl str::FromStr for Algorithm {
             SSH_RSA => Ok(Algorithm::Rsa { hash: None }),
             SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
             SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
+            WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::WebauthnEcdsaSha2NistP256),
             #[cfg(feature = "alloc")]
             _ => Ok(Algorithm::Other(AlgorithmName::from_str(id)?)),
             #[cfg(not(feature = "alloc"))]
