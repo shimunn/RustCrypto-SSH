@@ -37,7 +37,7 @@ fn private_key_with_fingerprint() {
 #[test]
 fn public_keys() {
     let dot_ssh = dot_ssh();
-    assert_eq!(dot_ssh.public_keys().unwrap().count(), 12);
+    assert_eq!(dot_ssh.public_keys().unwrap().count(), 13);
 }
 
 #[test]
