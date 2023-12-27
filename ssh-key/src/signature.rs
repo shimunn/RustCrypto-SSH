@@ -242,13 +242,15 @@ impl WebauthnSignatureData {
         sig: &Signature,
     ) -> core::result::Result<(Vec<u8>, Self), <Self as Decode>::Error> {
         let mut reader = &sig.data[..];
-        let sig_bytes = Vec::<u8>::decode(&mut reader)?;
+        let mut sig_bytes = Vec::with_capacity(SK_ED25519_SIGNATURE_SIZE);
+        let mut copy_vec = || -> core::result::Result<(), <Self as Decode>::Error> {
+            Vec::<u8>::decode(&mut reader)?.encode(&mut sig_bytes)?;
+            Ok(())
+        };
+        copy_vec()?;
+        copy_vec()?;
         let webauthn_data = WebauthnSignatureData::decode(&mut reader)?;
         Ok((sig_bytes, webauthn_data))
-    }
-
-    pub fn application(&self) -> &[u8] {
-        &self.origin
     }
 
     pub fn challenge(&self) -> core::result::Result<Vec<u8>, signature::Error> {
@@ -267,7 +269,11 @@ impl WebauthnSignatureData {
         Ok(decoded_challenge)
     }
 
-    pub fn signed_data(&self, message: &[u8]) -> core::result::Result<Vec<u8>, signature::Error> {
+    pub fn signed_data(
+        &self,
+        message: &[u8],
+        application: &str,
+    ) -> core::result::Result<Vec<u8>, signature::Error> {
         let challenge = self.challenge();
         let Self {
             flags,
@@ -279,7 +285,7 @@ impl WebauthnSignatureData {
         #[allow(clippy::integer_arithmetic)]
         let mut signed_data =
             Vec::with_capacity((2 * Sha256::output_size()) + SK_SIGNATURE_TRAILER_SIZE);
-        signed_data.extend(Sha256::digest(self.application()));
+        signed_data.extend(Sha256::digest(application));
         flags.encode(&mut signed_data);
         counter.encode(&mut signed_data);
         if let Some(extensions) = extensions {
@@ -557,12 +563,25 @@ impl Verifier<Signature> for public::SkEd25519 {
 #[cfg(feature = "p256")]
 impl Verifier<Signature> for public::SkEcdsaSha2NistP256 {
     fn verify(&self, message: &[u8], signature: &Signature) -> signature::Result<()> {
-        let (signature_bytes, flags_and_counter) = split_sk_signature(signature)?;
-        let signature = p256_signature_from_openssh_bytes(signature_bytes)?;
-        p256::ecdsa::VerifyingKey::from_encoded_point(self.ec_point())?.verify(
-            &make_sk_signed_data(self.application(), flags_and_counter, message),
-            &signature,
-        )
+        let verifying_key = p256::ecdsa::VerifyingKey::from_encoded_point(self.ec_point())?;
+        match signature.algorithm {
+            #[cfg(feature = "webauthn")]
+            Algorithm::WebauthnEcdsaSha2NistP256 => {
+                let (signature, webauthn_data) = WebauthnSignatureData::parse_signature(signature)
+                    .map_err(signature::Error::from_source)?;
+                let signature = p256_signature_from_openssh_bytes(&signature)?;
+                verifying_key.verify(&webauthn_data.signed_data(message, &self.application())?, &signature)
+            }
+            _ => {
+                let (signature_bytes, flags_and_counter) = split_sk_signature(signature)?;
+
+                let signature = p256_signature_from_openssh_bytes(signature_bytes)?;
+                verifying_key.verify(
+                    &make_sk_signed_data(self.application(), flags_and_counter, message),
+                    &signature,
+                )
+            }
+        }
     }
 }
 
@@ -789,14 +808,6 @@ impl Verifier<Signature> for EcdsaPublicKey {
                 #[cfg(not(all(feature = "p256", feature = "p384", feature = "p521")))]
                 _ => Err(signature.algorithm().unsupported_error().into()),
             },
-            #[cfg(feature = "webauthn")]
-            Algorithm::WebauthnEcdsaSha2NistP256 => {
-                let verifying_key = p256::ecdsa::VerifyingKey::try_from(self)?;
-                let (_, webauthn_data) = WebauthnSignatureData::parse_signature(signature)
-                    .map_err(signature::Error::from_source)?;
-                let signature = p256::ecdsa::Signature::try_from(signature)?;
-                verifying_key.verify(&webauthn_data.signed_data(message)?, &signature)
-            }
             _ => Err(signature.algorithm().unsupported_error().into()),
         }
     }

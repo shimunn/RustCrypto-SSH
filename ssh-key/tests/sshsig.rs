@@ -60,6 +60,8 @@ const SK_ED25519_SIGNATURE: &str = include_str!("examples/sshsig_sk_ed25519");
 /// `sshsig`-encoded signature.
 const WEBAUTHN_SK_ECDSA_SIGNATURE: &str = include_str!("examples/sshsig_webauthn_sk_ecdsa");
 
+const WEBAUTHN_SK_ECDSA_PUBLIC_KEY: &str = include_str!("examples/id_ecdsa_webauthn.pub");
+
 /// Bytes of the raw SkEd25519 signature.
 const SK_ED25519_SIGNATURE_BYTES: [u8; 69] = hex!(
     "2f5670b6f93465d17423878a74084bf331767031ed240c627c8eb79ab8fa1b93"
@@ -176,13 +178,15 @@ fn encode_sk_ed25519() {
 
 #[cfg(feature = "webauthn")]
 #[test]
-fn decode_webauthn() {
+fn verify_webauthn() {
     let sshsig = WEBAUTHN_SK_ECDSA_SIGNATURE.parse::<SshSig>().unwrap();
+    let public_key = WEBAUTHN_SK_ECDSA_PUBLIC_KEY.parse::<PublicKey>().unwrap();
     assert_eq!(sshsig.algorithm(), Algorithm::WebauthnEcdsaSha2NistP256);
     assert_eq!(sshsig.version(), 1);
     assert_eq!(sshsig.namespace(), "unittest");
     assert_eq!(sshsig.reserved(), &[0u8; 0]);
     assert_eq!(sshsig.hash_alg(), HashAlg::Sha512);
+    public_key.verify(sshsig.namespace(), b"This is a test, this is only a test", &sshsig).unwrap();
 }
 
 #[test]
