@@ -55,13 +55,11 @@ impl<const SIZE: usize> Decode for EcdsaPrivateKey<SIZE> {
 }
 
 impl<const SIZE: usize> Encode for EcdsaPrivateKey<SIZE> {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([4, self.needs_leading_zero().into(), SIZE].checked_sum()?)
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [4, self.needs_leading_zero().into(), SIZE].checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         [self.needs_leading_zero().into(), SIZE]
             .checked_sum()?
             .encode(writer)?;
@@ -97,7 +95,7 @@ impl<const SIZE: usize> Eq for EcdsaPrivateKey<SIZE> {}
 
 impl<const SIZE: usize> fmt::Debug for EcdsaPrivateKey<SIZE> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Ed25519PrivateKey").finish_non_exhaustive()
+        f.debug_struct("EcdsaPrivateKey").finish_non_exhaustive()
     }
 }
 
@@ -140,6 +138,16 @@ impl From<p384::SecretKey> for EcdsaPrivateKey<48> {
         EcdsaPrivateKey {
             bytes: sk.to_bytes().into(),
         }
+    }
+}
+
+#[cfg(feature = "p521")]
+impl From<p521::SecretKey> for EcdsaPrivateKey<66> {
+    fn from(sk: p521::SecretKey) -> EcdsaPrivateKey<66> {
+        // TODO(tarcieri): clean this up when migrating to hybrid-array
+        let mut bytes = [0u8; 66];
+        bytes.copy_from_slice(&sk.to_bytes());
+        EcdsaPrivateKey { bytes }
     }
 }
 
@@ -198,6 +206,16 @@ impl EcdsaKeypair {
                     public: public.into(),
                 })
             }
+            #[cfg(feature = "p521")]
+            EcdsaCurve::NistP521 => {
+                let private = p521::SecretKey::random(rng);
+                let public = private.public_key();
+                Ok(EcdsaKeypair::NistP521 {
+                    private: private.into(),
+                    public: public.into(),
+                })
+            }
+            #[cfg(not(all(feature = "p256", feature = "p384", feature = "p521")))]
             _ => Err(Error::AlgorithmUnknown),
         }
     }
@@ -288,9 +306,7 @@ impl Decode for EcdsaKeypair {
 }
 
 impl Encode for EcdsaKeypair {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
+    fn encoded_len(&self) -> encoding::Result<usize> {
         let public_len = EcdsaPublicKey::from(self).encoded_len()?;
 
         let private_len = match self {
@@ -299,10 +315,10 @@ impl Encode for EcdsaKeypair {
             Self::NistP521 { private, .. } => private.encoded_len()?,
         };
 
-        Ok([public_len, private_len].checked_sum()?)
+        [public_len, private_len].checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         EcdsaPublicKey::from(self).encode(writer)?;
 
         match self {

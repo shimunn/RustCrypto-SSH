@@ -38,10 +38,11 @@ respective SSH key algorithm.
   - [x] OpenSSH certificates
   - [x] OpenSSH signatures (a.k.a. "sshsig")
 - [x] OpenSSH certificate support
-  - [x] Certificate validation
-  - [x] Certificate authority (CA) support i.e. cert builder/signer
+  - [x] OpenSSH certificate validation
+  - [x] OpenSSH certificate authority (CA) support i.e. cert builder/signer
 - [x] Private key encryption/decryption (`bcrypt-pbkdf` + `aes256-ctr` only)
-- [x] Private key generation support: DSA, Ed25519, ECDSA (P-256+P-384), and RSA
+- [x] Private key generation support: DSA, Ed25519, ECDSA (P-256/P-384/P-521),
+      and RSA
 - [x] FIDO/U2F key support (`sk-*`) as specified in [PROTOCOL.u2f]
 - [x] Fingerprint support
   - [x] "randomart" fingerprint visualizations
@@ -53,13 +54,12 @@ respective SSH key algorithm.
 
 #### TODO
 
-- [ ] ECDSA/P-521 support
 - [ ] FIDO/U2F signature support
 - [ ] Legacy (pre-OpenSSH) SSH key format support
-  - [ ] PKCS#1
-  - [ ] PKCS#8
-  - [ ] [RFC4716] public keys
-  - [ ] SEC1
+  - [ ] PKCS#1 SSH private keys (i.e. RSA-only)
+  - [ ] PKCS#8 SSH private keys
+  - [ ] [RFC4716] SSH public keys
+  - [ ] SEC1 SSH public keys
 
 ### Supported Signature Algorithms
 
@@ -67,14 +67,14 @@ respective SSH key algorithm.
 |--------------------------------------|--------|--------|------|--------|------|--------|-----------|----------|
 | `ecdsa‑sha2‑nistp256`                | ✅     | ✅     | ✅   | ✅️     | ✅️   | ✅️     | `p256`    | heapless |
 | `ecdsa‑sha2‑nistp384`                | ✅     | ✅     | ✅   | ✅️     | ✅️   | ✅️     | `p384`    | heapless |
-| `ecdsa‑sha2‑nistp521`                | ✅     | ✅     | ✅   | ⛔️     | ⛔ ️  | ⛔️     | ⛔        | heapless |
+| `ecdsa‑sha2‑nistp521`                | ✅     | ✅     | ✅   | ✅️️     | ✅️ ️  | ✅️️     | `p521`    | heapless |
 | `ssh‑dsa`                            | ✅     | ✅     | ✅   | ✅     | ✅️   | ✅️     | `dsa`     | `alloc` ️ |
 | `ssh‑ed25519`                        | ✅     | ✅     | ✅   | ✅️     | ✅️   | ✅     | `ed25519` | heapless |
 | `ssh‑rsa`                            | ✅     | ✅     | ✅   | ✅️     | ✅️   | ✅     | `rsa`     | `alloc`  |
-| `sk‑ecdsa‑sha2‑nistp256@openssh.com` | ✅     | ✅     | ✅   | ⛔     | ⛔️   | ⛔️     | ⛔        | `alloc`  |
-| `sk‑ssh‑ed25519@openssh.com`         | ✅     | ✅     | ✅   | ⛔     | ⛔️   | ⛔️     | ⛔        | `alloc`  |
+| `sk‑ecdsa‑sha2‑nistp256@openssh.com` | ✅     | ✅     | ✅   | ⛔     | ⛔️   | ✅️     | ⛔        | `alloc`  |
+| `sk‑ssh‑ed25519@openssh.com`         | ✅     | ✅     | ✅   | ⛔     | ⛔️   | ✅️️     | `ed25519` | `alloc`  |
 
-By default *no algorithms are enabled* and you will get an
+By default *no SSH signature algorithms are enabled* and you will get an
 `Error::AlgorithmUnsupported` error if you try to use them.
 
 Enable the `crypto` feature or the "Feature" for specific algorithms in the
@@ -86,7 +86,7 @@ functionality for a particular SSH key algorithm.
 
 ## Minimum Supported Rust Version
 
-This crate requires **Rust 1.65** at a minimum.
+This crate requires **Rust 1.81** at a minimum.
 
 We may change the MSRV in the future, but it will be accompanied by a minor
 version bump.
@@ -108,12 +108,12 @@ dual licensed as above, without any additional terms or conditions.
 
 [//]: # (badges)
 
-[crate-image]: https://buildstats.info/crate/ssh-key
+[crate-image]: https://img.shields.io/crates/v/ssh-key
 [crate-link]: https://crates.io/crates/ssh-key
 [docs-image]: https://docs.rs/ssh-key/badge.svg
 [docs-link]: https://docs.rs/ssh-key/
 [license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
-[rustc-image]: https://img.shields.io/badge/rustc-1.65+-blue.svg
+[rustc-image]: https://img.shields.io/badge/rustc-1.81+-blue.svg
 [chat-image]: https://img.shields.io/badge/zulip-join_chat-blue.svg
 [chat-link]: https://rustcrypto.zulipchat.com/#narrow/stream/346919-SSH
 [build-image]: https://github.com/RustCrypto/SSH/actions/workflows/ssh-key.yml/badge.svg

@@ -74,11 +74,11 @@ fn decode_dsa_openssh() {
              e3c48e2ccbafd2170f69e8e5c8b6ab69b9c5f45d95e1d9293e965227eee5b879b1123371c21b1db60f14b5e
              5c05a4782ceb43a32f449647703063621e7a286bec95b16726c18b5e52383d00b297a6b03489b06068a5"
         ),
-        dsa_key.p.as_bytes(),
+        dsa_key.p().as_bytes(),
     );
     assert_eq!(
         &hex!("00891815378597fe42d3fd261fe76df365845bbb87"),
-        dsa_key.q.as_bytes(),
+        dsa_key.q().as_bytes(),
     );
     assert_eq!(
         &hex!(
@@ -86,7 +86,7 @@ fn decode_dsa_openssh() {
              520a713fe4104a74bed53fd5915da736365afd3f09777bbccfbadf7ac2b087b7f4d95fabe47d72a46e95088
              f9cd2a9fbf236b58a6982647f3c00430ad7352d47a25ebbe9477f0c3127da86ad7448644b76de5875c"
         ),
-        dsa_key.g.as_bytes(),
+        dsa_key.g().as_bytes(),
     );
     assert_eq!(
         &hex!(
@@ -94,7 +94,7 @@ fn decode_dsa_openssh() {
              a57b475c78d44989f16577527e598334be6aae4abd750c36af80489d392697c1f32f3cf3c9a8b99bcddb53d
              7a37e1a28fd53d4934131cf41c437c6734d1e04004adcd925b84b3956c30c3a3904eecb31400b0df48"
         ),
-        dsa_key.y.as_bytes(),
+        dsa_key.y().as_bytes(),
     );
 
     assert_eq!("user@example.com", cert.comment());
@@ -140,12 +140,38 @@ fn decode_ed25519_openssh() {
 }
 
 #[test]
+fn decode_ed25519_openssh_with_crit_options() {
+    let src = "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIBW/4zLqXWROWmN1sPgdySnH1GUsEFBjFrRwKKw71BoBAAAAIH1MFwI1oRdEifXgBQvWQfCBBtA/Pi8YCUE/I3wXFJo2AAAAAAAAAAAAAAABAAAAA2ZvbwAAAAAAAAAAAAAAAH//////////AAAAIwAAABFoZWxsb0BleGFtcGxlLmNvbQAAAAoAAAAGZm9vYmFyAAAAAAAAAAAAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIH1MFwI1oRdEifXgBQvWQfCBBtA/Pi8YCUE/I3wXFJo2AAAAUwAAAAtzc2gtZWQyNTUxOQAAAEDRoPdI48KyoaLgaDZsSGs80qBeYQOXBd84CX8GYzFt/L21rxF1EeuPOkgsx7Q39WllXp+FgMMojsHftK/DJHEN";
+    let cert = Certificate::from_str(src).unwrap();
+
+    assert_eq!(Algorithm::Ed25519, cert.public_key().algorithm());
+
+    assert_eq!(cert.critical_options().len(), 1);
+    assert_eq!(
+        cert.critical_options().get("hello@example.com").unwrap(),
+        "foobar"
+    );
+
+    let openssh = cert.to_openssh().unwrap();
+
+    assert_eq!(openssh, src);
+
+    assert_eq!(cert, Certificate::from_str(&openssh).unwrap());
+}
+
+#[test]
 fn decode_rsa_4096_openssh() {
     let cert = Certificate::from_str(RSA_4096_CERT_EXAMPLE).unwrap();
     assert_eq!(Algorithm::Rsa { hash: None }, cert.public_key().algorithm());
 
     let rsa_key = cert.public_key().rsa().unwrap();
-    assert_eq!(&hex!("010001"), rsa_key.e.as_bytes());
+    dbg!(rsa_key.n().as_bytes());
+    dbg!(
+        rsa_key.n().as_positive_bytes(),
+        rsa_key.n().as_positive_bytes().unwrap().len()
+    );
+    assert_eq!(4096, rsa_key.key_size());
+    assert_eq!(&hex!("010001"), rsa_key.e().as_bytes());
     assert_eq!(
         &hex!(
             "00b45911edc6ec5e7d2261a48c46ab889b1858306271123e6f02dc914cf3c0352492e8a6b7a7925added527
@@ -161,7 +187,7 @@ fn decode_rsa_4096_openssh() {
              4814140f75cac08079431043222fb91f075d76be55cbe138e3b99a605c561c49dea50e253c8306c4f4f77d9
              96f898db64c5d8a0a15c6efa28b0934bf0b6f2b01950d877230fe4401078420fd6dd3"
         ),
-        rsa_key.n.as_bytes(),
+        rsa_key.n().as_bytes(),
     );
 
     assert_eq!("user@example.com", cert.comment());

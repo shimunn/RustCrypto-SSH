@@ -9,7 +9,13 @@ use encoding::{
 };
 use signature::Verifier;
 
+#[cfg(doc)]
+use crate::{PrivateKey, PublicKey};
+
 type Version = u32;
+
+#[cfg(feature = "serde")]
+use serde::{de, ser, Deserialize, Serialize};
 
 /// `sshsig` provides a general-purpose signature format based on SSH keys and
 /// wire formats.
@@ -22,6 +28,10 @@ type Version = u32;
 /// ```
 ///
 /// See [PROTOCOL.sshsig] for more information.
+///
+/// # Usage
+///
+/// See [`PrivateKey::sign`] and [`PublicKey::verify`] for usage information.
 ///
 /// [PROTOCOL.sshsig]: https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.sshsig?annotate=HEAD
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,10 +95,12 @@ impl SshSig {
     /// -----BEGIN SSH SIGNATURE-----
     /// ```
     pub fn to_pem(&self, line_ending: LineEnding) -> Result<String> {
-        self.encode_pem_string(line_ending)
+        Ok(self.encode_pem_string(line_ending)?)
     }
 
     /// Sign the given message with the provided signing key.
+    ///
+    /// See also: [`PrivateKey::sign`].
     pub fn sign<S: SigningKey>(
         signing_key: &S,
         namespace: &str,
@@ -193,6 +205,7 @@ impl SshSig {
     }
 
     /// Get the hash algorithm used to produce this signature.
+
     ///
     /// Data to be signed is first hashed with the specified `hash_alg`.
     /// This is done to limit the amount of data presented to the signature
@@ -254,10 +267,8 @@ impl Decode for SshSig {
 }
 
 impl Encode for SshSig {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             Self::MAGIC_PREAMBLE.len(),
             self.version.encoded_len()?,
             self.public_key.encoded_len_prefixed()?,
@@ -266,10 +277,10 @@ impl Encode for SshSig {
             self.hash_alg.encoded_len()?,
             self.signature.encoded_len_prefixed()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         writer.write(Self::MAGIC_PREAMBLE)?;
         self.version.encode(writer)?;
         self.public_key.encode_prefixed(writer)?;
@@ -293,6 +304,7 @@ impl PemLabel for SshSig {
     const PEM_LABEL: &'static str = "SSH SIGNATURE";
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for SshSig {
     fn to_string(&self) -> String {
         self.to_pem(LineEnding::default())
@@ -317,26 +329,57 @@ impl<'a> SignedData<'a> {
     }
 }
 
-impl<'a> Encode for SignedData<'a> {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+impl Encode for SignedData<'_> {
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             SshSig::MAGIC_PREAMBLE.len(),
             self.namespace.encoded_len()?,
             self.reserved.encoded_len()?,
             self.hash_alg.encoded_len()?,
             self.hash.encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         writer.write(SshSig::MAGIC_PREAMBLE)?;
         self.namespace.encode(writer)?;
         self.reserved.encode(writer)?;
         self.hash_alg.encode(writer)?;
         self.hash.encode(writer)?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for SshSig {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let string = String::deserialize(deserializer)?;
+            string.parse::<SshSig>().map_err(de::Error::custom)
+        } else {
+            let bytes = Vec::<u8>::deserialize(deserializer)?;
+            Self::decode(&mut bytes.as_slice()).map_err(de::Error::custom)
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for SshSig {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: ser::Serializer,
+    {
+        if serializer.is_human_readable() {
+            self.to_pem(LineEnding::LF)
+                .map_err(ser::Error::custom)?
+                .serialize(serializer)
+        } else {
+            let bytes = self.encode_vec().map_err(ser::Error::custom)?;
+            bytes.serialize(serializer)
+        }
     }
 }

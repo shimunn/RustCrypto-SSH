@@ -18,7 +18,7 @@ const DEFAULT_APPLICATION_STRING: &str = "ssh:";
 /// Security Key (FIDO/U2F) ECDSA/NIST P-256 public key as specified in
 /// [PROTOCOL.u2f](https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.u2f?annotate=HEAD).
 #[cfg(feature = "ecdsa")]
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, Ord, Hash, PartialEq, PartialOrd)]
 pub struct SkEcdsaSha2NistP256 {
     /// Elliptic curve point representing a public key.
     ec_point: EcdsaNistP256PublicKey,
@@ -30,6 +30,15 @@ pub struct SkEcdsaSha2NistP256 {
 
 #[cfg(feature = "ecdsa")]
 impl SkEcdsaSha2NistP256 {
+    /// Construct new instance of SkEcdsaSha2NistP256.
+    #[cfg(feature = "alloc")]
+    pub fn new(ec_point: EcdsaNistP256PublicKey, application: impl Into<String>) -> Self {
+        SkEcdsaSha2NistP256 {
+            ec_point,
+            application: application.into(),
+        }
+    }
+
     /// Get the elliptic curve point for this Security Key.
     pub fn ec_point(&self) -> &EcdsaNistP256PublicKey {
         &self.ec_point
@@ -82,18 +91,16 @@ impl Decode for SkEcdsaSha2NistP256 {
 
 #[cfg(feature = "ecdsa")]
 impl Encode for SkEcdsaSha2NistP256 {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             EcdsaCurve::NistP256.encoded_len()?,
             self.ec_point.as_bytes().encoded_len()?,
             self.application().encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         EcdsaCurve::NistP256.encode(writer)?;
         self.ec_point.as_bytes().encode(writer)?;
         self.application().encode(writer)?;
@@ -121,7 +128,7 @@ impl From<SkEcdsaSha2NistP256> for EcdsaNistP256PublicKey {
 
 /// Security Key (FIDO/U2F) Ed25519 public key as specified in
 /// [PROTOCOL.u2f](https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.u2f?annotate=HEAD).
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct SkEd25519 {
     /// Ed25519 public key.
     public_key: Ed25519PublicKey,
@@ -132,6 +139,15 @@ pub struct SkEd25519 {
 }
 
 impl SkEd25519 {
+    /// Construct new instance of SkEd25519.
+    #[cfg(feature = "alloc")]
+    pub fn new(public_key: Ed25519PublicKey, application: impl Into<String>) -> Self {
+        SkEd25519 {
+            public_key,
+            application: application.into(),
+        }
+    }
+
     /// Get the Ed25519 private key for this security key.
     pub fn public_key(&self) -> &Ed25519PublicKey {
         &self.public_key
@@ -177,17 +193,15 @@ impl Decode for SkEd25519 {
 }
 
 impl Encode for SkEd25519 {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             self.public_key.encoded_len()?,
             self.application().encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.public_key.encode(writer)?;
         self.application().encode(writer)?;
         Ok(())

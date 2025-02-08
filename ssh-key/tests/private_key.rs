@@ -6,13 +6,13 @@ use ssh_key::{Algorithm, Cipher, KdfAlg, PrivateKey};
 #[cfg(feature = "ecdsa")]
 use ssh_key::EcdsaCurve;
 
-#[cfg(all(feature = "alloc"))]
+#[cfg(feature = "alloc")]
 use ssh_key::LineEnding;
 
 #[cfg(all(feature = "std"))]
 use {
     ssh_key::PublicKey,
-    std::{io, process},
+    std::{io, path::PathBuf, process},
 };
 
 /// DSA OpenSSH-formatted public key
@@ -34,6 +34,9 @@ const OPENSSH_ECDSA_P521_EXAMPLE: &str = include_str!("examples/id_ecdsa_p521");
 /// Ed25519 OpenSSH-formatted private key
 const OPENSSH_ED25519_EXAMPLE: &str = include_str!("examples/id_ed25519");
 
+/// Ed25519 OpenSSH-formatted private key with 64-column line wrapping
+const OPENSSH_ED25519_64COLS_EXAMPLE: &str = include_str!("examples/id_ed25519.64cols");
+
 /// RSA (3072-bit) OpenSSH-formatted public key
 #[cfg(feature = "alloc")]
 const OPENSSH_RSA_3072_EXAMPLE: &str = include_str!("examples/id_rsa_3072");
@@ -41,6 +44,21 @@ const OPENSSH_RSA_3072_EXAMPLE: &str = include_str!("examples/id_rsa_3072");
 /// RSA (4096-bit) OpenSSH-formatted public key
 #[cfg(feature = "alloc")]
 const OPENSSH_RSA_4096_EXAMPLE: &str = include_str!("examples/id_rsa_4096");
+
+/// OpenSSH-formatted private key with a custom algorithm name
+#[cfg(feature = "alloc")]
+const OPENSSH_OPAQUE_EXAMPLE: &str = include_str!("examples/id_opaque");
+
+/// OpenSSH-formatted private key with no internal or external padding, and no comment
+/// Trips a corner case in base64ct
+#[cfg(feature = "ecdsa")]
+const OPENSSH_PADLESS_WONDER_EXAMPLE: &str = include_str!("examples/padless_wonder");
+
+/// Get a path into the `tests/scratch` directory.
+#[cfg(feature = "std")]
+pub fn scratch_path(filename: &str) -> PathBuf {
+    PathBuf::from(&format!("tests/scratch/{}", filename))
+}
 
 #[cfg(feature = "alloc")]
 #[test]
@@ -58,11 +76,11 @@ fn decode_dsa_openssh() {
              e3c48e2ccbafd2170f69e8e5c8b6ab69b9c5f45d95e1d9293e965227eee5b879b1123371c21b1db60f14b5e
              5c05a4782ceb43a32f449647703063621e7a286bec95b16726c18b5e52383d00b297a6b03489b06068a5"
         ),
-        dsa_keypair.public.p.as_bytes(),
+        dsa_keypair.public().p().as_bytes(),
     );
     assert_eq!(
         &hex!("00891815378597fe42d3fd261fe76df365845bbb87"),
-        dsa_keypair.public.q.as_bytes(),
+        dsa_keypair.public().q().as_bytes(),
     );
     assert_eq!(
         &hex!(
@@ -70,7 +88,7 @@ fn decode_dsa_openssh() {
              520a713fe4104a74bed53fd5915da736365afd3f09777bbccfbadf7ac2b087b7f4d95fabe47d72a46e95088
              f9cd2a9fbf236b58a6982647f3c00430ad7352d47a25ebbe9477f0c3127da86ad7448644b76de5875c"
         ),
-        dsa_keypair.public.g.as_bytes(),
+        dsa_keypair.public().g().as_bytes(),
     );
     assert_eq!(
         &hex!(
@@ -78,11 +96,11 @@ fn decode_dsa_openssh() {
              a57b475c78d44989f16577527e598334be6aae4abd750c36af80489d392697c1f32f3cf3c9a8b99bcddb53d
              7a37e1a28fd53d4934131cf41c437c6734d1e04004adcd925b84b3956c30c3a3904eecb31400b0df48"
         ),
-        dsa_keypair.public.y.as_bytes(),
+        dsa_keypair.public().y().as_bytes(),
     );
     assert_eq!(
         &hex!("0c377ac449e770d89a3557743cbd050396114b62"),
-        dsa_keypair.private.as_bytes()
+        dsa_keypair.private().as_bytes()
     );
     assert_eq!("user@example.com", key.comment());
 }
@@ -117,6 +135,24 @@ fn decode_ecdsa_p256_openssh() {
 
     #[cfg(feature = "alloc")]
     assert_eq!("user@example.com", key.comment());
+}
+
+#[cfg(feature = "ecdsa")]
+#[test]
+fn decode_padless_wonder_openssh() {
+    let key = PrivateKey::from_openssh(OPENSSH_PADLESS_WONDER_EXAMPLE).unwrap();
+    assert_eq!(
+        Algorithm::Ecdsa {
+            curve: EcdsaCurve::NistP256
+        },
+        key.algorithm(),
+    );
+    assert_eq!(Cipher::None, key.cipher());
+    assert_eq!(KdfAlg::None, key.kdf().algorithm());
+    assert!(key.kdf().is_none());
+
+    #[cfg(feature = "alloc")]
+    assert_eq!("", key.comment());
 }
 
 #[cfg(feature = "ecdsa")]
@@ -214,6 +250,14 @@ fn decode_ed25519_openssh() {
     assert_eq!(key.comment(), "user@example.com");
 }
 
+/// Test alternative PEM line wrappings (64 columns).
+#[test]
+fn decode_ed25519_openssh_64cols() {
+    let key = PrivateKey::from_openssh(OPENSSH_ED25519_64COLS_EXAMPLE).unwrap();
+    let other_key = PrivateKey::from_openssh(OPENSSH_ED25519_EXAMPLE).unwrap();
+    assert_eq!(key, other_key);
+}
+
 #[cfg(feature = "alloc")]
 #[test]
 fn decode_rsa_3072_openssh() {
@@ -224,7 +268,8 @@ fn decode_rsa_3072_openssh() {
     assert!(key.kdf().is_none());
 
     let rsa_keypair = key.key_data().rsa().unwrap();
-    assert_eq!(&hex!("010001"), rsa_keypair.public.e.as_bytes());
+    assert_eq!(3072, rsa_keypair.key_size());
+    assert_eq!(&hex!("010001"), rsa_keypair.public().e().as_bytes());
     assert_eq!(
         &hex!(
             "00a68e478c9bc93726436b7f5e9e6f9a46e1b73bec1e8cb7754de2c6a5b6c455f2f012a7259afcf94181d69
@@ -237,7 +282,7 @@ fn decode_rsa_3072_openssh() {
              0549d3174b85bd7f6624c3753cf235b650d0e4228f32be7b54a590d869fb7786559bb7a4d66f9d3a69c085e
              fdf083a915d47a1d9161a08756b263b06e739d99f2890362abc96ade42cce8f939a40daff9"
         ),
-        rsa_keypair.public.n.as_bytes(),
+        rsa_keypair.public().n().as_bytes(),
     );
     assert_eq!(
         &hex!(
@@ -251,7 +296,7 @@ fn decode_rsa_3072_openssh() {
              325f3fb37326623dbbec63b3d984830b2dd27bebb6bd2ed5345dfff18df1806adebceda9845804968930681
              ac3e523138c5216cb135997e3e143a7816acc3d8741eacec7e15f53da0f0810691708d9d"
         ),
-        rsa_keypair.private.d.as_bytes()
+        rsa_keypair.private().d().as_bytes()
     );
     assert_eq!(
         &hex!(
@@ -261,7 +306,7 @@ fn decode_rsa_3072_openssh() {
              88dd6f72eef5cff1927cde573a4ca0d43c2b6c6a95721445122e1cf6aa5f05b65cb9c86124f9f79fa29f05e
              3f06f3b83edca9941f571650e0fb468aae4c"
         ),
-        rsa_keypair.private.iqmp.as_bytes()
+        rsa_keypair.private().iqmp().as_bytes()
     );
     assert_eq!(
         &hex!(
@@ -271,7 +316,7 @@ fn decode_rsa_3072_openssh() {
              990e48b93fd1d284fcc8c1c07fbefc04d02925b2f159a9a9f567073e1c94fdc6e472f48963be16c5c545385
              6ad2bf7916e42c36e75a5018910d8dad038d73"
         ),
-        rsa_keypair.private.p.as_bytes()
+        rsa_keypair.private().p().as_bytes()
     );
     assert_eq!(
         &hex!(
@@ -281,7 +326,7 @@ fn decode_rsa_3072_openssh() {
              9d136d085c1d05c39f4c36cf89fdc3c66a755e63f446e16302b13599400f0a83321a2e6b9153df02f03de31
              8ea09039282853f2011e0905d1157667caf1e3"
         ),
-        rsa_keypair.private.q.as_bytes()
+        rsa_keypair.private().q().as_bytes()
     );
     assert_eq!("user@example.com", key.comment());
 }
@@ -296,7 +341,8 @@ fn decode_rsa_4096_openssh() {
     assert!(key.kdf().is_none());
 
     let rsa_keypair = key.key_data().rsa().unwrap();
-    assert_eq!(&hex!("010001"), rsa_keypair.public.e.as_bytes());
+    assert_eq!(4096, rsa_keypair.key_size());
+    assert_eq!(&hex!("010001"), rsa_keypair.public().e().as_bytes());
     assert_eq!(
         &hex!(
             "00b45911edc6ec5e7d2261a48c46ab889b1858306271123e6f02dc914cf3c0352492e8a6b7a7925added527
@@ -312,7 +358,7 @@ fn decode_rsa_4096_openssh() {
              4814140f75cac08079431043222fb91f075d76be55cbe138e3b99a605c561c49dea50e253c8306c4f4f77d9
              96f898db64c5d8a0a15c6efa28b0934bf0b6f2b01950d877230fe4401078420fd6dd3"
         ),
-        rsa_keypair.public.n.as_bytes(),
+        rsa_keypair.public().n().as_bytes(),
     );
     assert_eq!(
         &hex!(
@@ -329,7 +375,7 @@ fn decode_rsa_4096_openssh() {
              822cdcf88b44cd6aea8bfc646ce52f9d05e7e867a32d462e35a163c15b7df00e9c0a870345b86e7882971b4
              d79d42507ade7c26e6db29f52fbe58430f915c554145faa950ae6b6e4f87bf24a61"
         ),
-        rsa_keypair.private.d.as_bytes()
+        rsa_keypair.private().d().as_bytes()
     );
     assert_eq!(
         &hex!(
@@ -340,7 +386,7 @@ fn decode_rsa_4096_openssh() {
              235833fdc93947a2b4ed45d43df51087d91d59eb0bf09fe6f45036b23c944addce2976b805425c6841129be
              5b17c4dcc41d62daa053d06a1fbfd3c20543a63066ad69933ae64538c305ae645d81557a6f3c9"
         ),
-        rsa_keypair.private.iqmp.as_bytes()
+        rsa_keypair.private().iqmp().as_bytes()
     );
     assert_eq!(
         &hex!(
@@ -351,7 +397,7 @@ fn decode_rsa_4096_openssh() {
              0613082e7d1830f936e29c7865c2b8acd30870dd20679788e0b2aaa2285d35ea7347c4083e2ee9c92dcb11e
              ea114245c5f22d7afeb9d51cbc0ca17116261fac8a8f3c3054da1f53ad297f8ce184663ec4e617d"
         ),
-        rsa_keypair.private.p.as_bytes()
+        rsa_keypair.private().p().as_bytes()
     );
     assert_eq!(
         &hex!(
@@ -362,12 +408,50 @@ fn decode_rsa_4096_openssh() {
              3d09881ed7fa5f49b374bcab97dafa067e8eb63bc9ddf2668bf3ebb2bb585d7b12ff591e6ff34889196b9e5
              293809f168d681bb7b09680fef093c8a28ef0d25568fce4ab5e879fee21a7525ac08caf9efa2d8f"
         ),
-        rsa_keypair.private.q.as_bytes()
+        rsa_keypair.private().q().as_bytes()
     );
     assert_eq!("user@example.com", key.comment());
 }
 
-#[cfg(all(feature = "alloc"))]
+#[cfg(feature = "rsa")]
+#[test]
+fn round_trip_rsa_3072() {
+    let private_key = PrivateKey::from_openssh(OPENSSH_RSA_3072_EXAMPLE).unwrap();
+    let rsa_keypair = match private_key.key_data() {
+        ssh_key::private::KeypairData::Rsa(k) => k,
+        _ => unreachable!(),
+    };
+
+    let rsa_private_key = rsa::RsaPrivateKey::try_from(rsa_keypair).unwrap();
+    let rsa_keypair2 = ssh_key::private::RsaKeypair::try_from(&rsa_private_key).unwrap();
+    assert_eq!(rsa_keypair, &rsa_keypair2);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn decode_custom_algorithm_openssh() {
+    let key = PrivateKey::from_openssh(OPENSSH_OPAQUE_EXAMPLE).unwrap();
+    assert!(
+        matches!(key.algorithm(), Algorithm::Other(name) if name.as_str() == "name@example.com")
+    );
+    assert_eq!(Cipher::None, key.cipher());
+    assert_eq!(KdfAlg::None, key.kdf().algorithm());
+    assert!(key.kdf().is_none());
+
+    let opaque_keypair = key.key_data().other().unwrap();
+    assert_eq!(
+        &hex!("888f24ee17adfed0091e67e485fb9844cfed6072cac1d06390e4005f5015b44f"),
+        opaque_keypair.public.as_ref(),
+    );
+    assert_eq!(
+        &hex!("986c953b4b5efb3285ff207c1ca5ee39a59047bc488fbc3b1ef036efc7575c75"),
+        opaque_keypair.private.as_ref(),
+    );
+
+    assert_eq!(key.comment(), "comment@example.com");
+}
+
+#[cfg(feature = "alloc")]
 #[test]
 fn encode_dsa_openssh() {
     encoding_test(OPENSSH_DSA_EXAMPLE)
@@ -391,26 +475,32 @@ fn encode_ecdsa_p521_openssh() {
     encoding_test(OPENSSH_ECDSA_P521_EXAMPLE)
 }
 
-#[cfg(all(feature = "alloc"))]
+#[cfg(feature = "alloc")]
 #[test]
 fn encode_ed25519_openssh() {
     encoding_test(OPENSSH_ED25519_EXAMPLE)
 }
 
-#[cfg(all(feature = "alloc"))]
+#[cfg(feature = "alloc")]
 #[test]
 fn encode_rsa_3072_openssh() {
     encoding_test(OPENSSH_RSA_3072_EXAMPLE)
 }
 
-#[cfg(all(feature = "alloc"))]
+#[cfg(feature = "alloc")]
 #[test]
 fn encode_rsa_4096_openssh() {
     encoding_test(OPENSSH_RSA_4096_EXAMPLE)
 }
 
+#[cfg(feature = "alloc")]
+#[test]
+fn encode_custom_algorithm_openssh() {
+    encoding_test(OPENSSH_OPAQUE_EXAMPLE)
+}
+
 /// Common behavior of all encoding tests
-#[cfg(all(feature = "alloc"))]
+#[cfg(feature = "alloc")]
 fn encoding_test(private_key: &str) {
     let key = PrivateKey::from_openssh(private_key).unwrap();
 
@@ -420,15 +510,21 @@ fn encoding_test(private_key: &str) {
     assert_eq!(key, key2);
 
     #[cfg(feature = "std")]
-    encoding_integration_test(key)
+    if !matches!(key.algorithm(), Algorithm::Other(_)) {
+        encoding_integration_test(key)
+    }
 }
 
 /// Parse PEM encoded using `PrivateKey::to_openssh` using the `ssh-keygen` utility.
 #[cfg(all(feature = "std"))]
 fn encoding_integration_test(private_key: PrivateKey) {
-    let dir = tempfile::tempdir().unwrap();
-    let mut path = dir.path().to_owned();
-    path.push("id_example");
+    let fingerprint = private_key
+        .fingerprint(Default::default())
+        .to_string()
+        .replace(':', "-")
+        .replace('/', "_");
+
+    let path = scratch_path(&fingerprint);
 
     private_key
         .write_openssh_file(&path, LineEnding::LF)

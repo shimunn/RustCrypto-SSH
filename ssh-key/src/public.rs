@@ -9,6 +9,8 @@ mod ecdsa;
 mod ed25519;
 mod key_data;
 #[cfg(feature = "alloc")]
+mod opaque;
+#[cfg(feature = "alloc")]
 mod rsa;
 mod sk;
 mod ssh_format;
@@ -16,7 +18,11 @@ mod ssh_format;
 pub use self::{ed25519::Ed25519PublicKey, key_data::KeyData, sk::SkEd25519};
 
 #[cfg(feature = "alloc")]
-pub use self::{dsa::DsaPublicKey, rsa::RsaPublicKey};
+pub use self::{
+    dsa::DsaPublicKey,
+    opaque::{OpaquePublicKey, OpaquePublicKeyBytes},
+    rsa::RsaPublicKey,
+};
 
 #[cfg(feature = "ecdsa")]
 pub use self::{ecdsa::EcdsaPublicKey, sk::SkEcdsaSha2NistP256};
@@ -43,6 +49,9 @@ use serde::{de, ser, Deserialize, Serialize};
 
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
+
+#[cfg(doc)]
+use crate::PrivateKey;
 
 /// SSH public key.
 ///
@@ -72,7 +81,7 @@ use std::{fs, path::Path};
 /// The serialization uses a binary encoding with binary formats like bincode
 /// and CBOR, and the OpenSSH string serialization when used with
 /// human-readable formats like JSON and TOML.
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PublicKey {
     /// Key data.
     pub(crate) key_data: KeyData,
@@ -147,9 +156,7 @@ impl PublicKey {
     /// Serialize SSH public key as raw bytes.
     #[cfg(feature = "alloc")]
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut public_key_bytes = Vec::new();
-        self.key_data.encode(&mut public_key_bytes)?;
-        Ok(public_key_bytes)
+        Ok(self.key_data.encode_vec()?)
     }
 
     /// Verify the [`SshSig`] signature over the given message using this
@@ -163,6 +170,41 @@ impl PublicKey {
     /// ```
     ///
     /// See [PROTOCOL.sshsig] for more information.
+    ///
+    /// # Usage
+    ///
+    /// See also: [`PrivateKey::sign`].
+    ///
+    #[cfg_attr(feature = "ed25519", doc = "```")]
+    #[cfg_attr(not(feature = "ed25519"), doc = "```ignore")]
+    /// # fn main() -> Result<(), ssh_key::Error> {
+    /// use ssh_key::{PublicKey, SshSig};
+    ///
+    /// // Message to be verified.
+    /// let message = b"testing";
+    ///
+    /// // Example domain/namespace used for the message.
+    /// let namespace = "example";
+    ///
+    /// // Public key which computed the signature.
+    /// let encoded_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti user@example.com";
+    ///
+    /// // Example signature to be verified.
+    /// let signature_str = r#"
+    /// -----BEGIN SSH SIGNATURE-----
+    /// U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgsz6u836i33yqAQ3v3qNOJB9l8b
+    /// UppPQ+0UMn9cVKq2IAAAAHZXhhbXBsZQAAAAAAAAAGc2hhNTEyAAAAUwAAAAtzc2gtZWQy
+    /// NTUxOQAAAEBPEav+tMGNnox4MuzM7rlHyVBajCn8B0kAyiOWwPKprNsG3i6X+voz/WCSik
+    /// /FowYwqhgCABUJSvRX3AERVBUP
+    /// -----END SSH SIGNATURE-----
+    /// "#;
+    ///
+    /// let public_key = encoded_public_key.parse::<PublicKey>()?;
+    /// let signature = signature_str.parse::<SshSig>()?;
+    /// public_key.verify(namespace, message, &signature)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// [PROTOCOL.sshsig]: https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.sshsig?annotate=HEAD
     #[cfg(feature = "alloc")]
@@ -188,7 +230,9 @@ impl PublicKey {
     /// Write public key as an OpenSSH-formatted file.
     #[cfg(feature = "std")]
     pub fn write_openssh_file(&self, path: &Path) -> Result<()> {
-        let encoded = self.to_openssh()?;
+        let mut encoded = self.to_openssh()?;
+        encoded.push('\n'); // TODO(tarcieri): OS-specific line endings?
+
         fs::write(path, encoded.as_bytes())?;
         Ok(())
     }
@@ -210,7 +254,7 @@ impl PublicKey {
         &self.comment
     }
 
-    /// Private key data.
+    /// Public key data.
     pub fn key_data(&self) -> &KeyData {
         &self.key_data
     }
@@ -316,6 +360,7 @@ impl FromStr for PublicKey {
 }
 
 #[cfg(feature = "alloc")]
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for PublicKey {
     fn to_string(&self) -> String {
         self.to_openssh().expect("SSH public key encoding error")

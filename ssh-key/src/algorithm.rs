@@ -1,14 +1,20 @@
 //! Algorithm support.
 
+#[cfg(feature = "alloc")]
+mod name;
+
 use crate::{Error, Result};
 use core::{fmt, str};
-use encoding::Label;
+use encoding::{Label, LabelError};
 
 #[cfg(feature = "alloc")]
 use {
-    alloc::vec::Vec,
+    alloc::{borrow::ToOwned, string::String, vec::Vec},
     sha2::{Digest, Sha256, Sha512},
 };
+
+#[cfg(feature = "alloc")]
+pub use name::AlgorithmName;
 
 /// bcrypt-pbkdf
 const BCRYPT: &str = "bcrypt";
@@ -31,11 +37,21 @@ const CERT_ED25519: &str = "ssh-ed25519-cert-v01@openssh.com";
 /// OpenSSH certificate with RSA public key
 const CERT_RSA: &str = "ssh-rsa-cert-v01@openssh.com";
 
+/// OpenSSH certificate with RSA + SHA-256 as described in RFC8332 § 3
+const CERT_RSA_SHA2_256: &str = "rsa-sha2-256-cert-v01@openssh.com";
+
+/// OpenSSH certificate with RSA + SHA-512 as described in RFC8332 § 3
+const CERT_RSA_SHA2_512: &str = "rsa-sha2-512-cert-v01@openssh.com";
+
 /// OpenSSH certificate for ECDSA (NIST P-256) U2F/FIDO security key
 const CERT_SK_ECDSA_SHA2_P256: &str = "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com";
 
 /// OpenSSH certificate for Ed25519 U2F/FIDO security key
 const CERT_SK_SSH_ED25519: &str = "sk-ssh-ed25519-cert-v01@openssh.com";
+
+/// OpenSSH certificate for ECDSA (NIST P-256) in Webauthn format
+const CERT_WEBAUTHN_SK_ECDSA_SHA2_P256: &str =
+    "webauthn-sk-ecdsa-sha2-nistp256-cert-v01@openssh.com";
 
 /// ECDSA with SHA-256 + NIST P-256
 const ECDSA_SHA2_P256: &str = "ecdsa-sha2-nistp256";
@@ -76,11 +92,14 @@ const SK_ECDSA_SHA2_P256: &str = "sk-ecdsa-sha2-nistp256@openssh.com";
 /// U2F/FIDO security key with Ed25519
 const SK_SSH_ED25519: &str = "sk-ssh-ed25519@openssh.com";
 
+/// Webauthn with ECDSA/NIST P-256
+const WEBAUTHN_SK_ECDSA_SHA2_P256: &str = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+
 /// SSH key algorithms.
 ///
 /// This type provides a registry of supported digital signature algorithms
 /// used for SSH keys.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Algorithm {
     /// Digital Signature Algorithm
@@ -93,6 +112,7 @@ pub enum Algorithm {
     },
 
     /// Ed25519
+    #[default]
     Ed25519,
 
     /// RSA
@@ -112,6 +132,13 @@ pub enum Algorithm {
 
     /// FIDO/U2F key with Ed25519
     SkEd25519,
+
+    /// Webauthn
+    WebauthnEcdsaSha2NistP256,
+
+    /// Other
+    #[cfg(feature = "alloc")]
+    Other(AlgorithmName),
 }
 
 impl Algorithm {
@@ -126,30 +153,11 @@ impl Algorithm {
     /// - `ssh-rsa`
     /// - `sk-ecdsa-sha2-nistp256@openssh.com` (FIDO/U2F key)
     /// - `sk-ssh-ed25519@openssh.com` (FIDO/U2F key)
+    /// - `webauthn-sk-ecdsa-sha2-nistp256@openssh.com`
+    ///
+    /// Any other algorithms are mapped to the [`Algorithm::Other`] variant.
     pub fn new(id: &str) -> Result<Self> {
-        match id {
-            SSH_DSA => Ok(Algorithm::Dsa),
-            ECDSA_SHA2_P256 => Ok(Algorithm::Ecdsa {
-                curve: EcdsaCurve::NistP256,
-            }),
-            ECDSA_SHA2_P384 => Ok(Algorithm::Ecdsa {
-                curve: EcdsaCurve::NistP384,
-            }),
-            ECDSA_SHA2_P521 => Ok(Algorithm::Ecdsa {
-                curve: EcdsaCurve::NistP521,
-            }),
-            RSA_SHA2_256 => Ok(Algorithm::Rsa {
-                hash: Some(HashAlg::Sha256),
-            }),
-            RSA_SHA2_512 => Ok(Algorithm::Rsa {
-                hash: Some(HashAlg::Sha512),
-            }),
-            SSH_ED25519 => Ok(Algorithm::Ed25519),
-            SSH_RSA => Ok(Algorithm::Rsa { hash: None }),
-            SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
-            SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
-            _ => Err(Error::AlgorithmUnknown),
-        }
+        Ok(id.parse()?)
     }
 
     /// Decode algorithm from the given string identifier as used by
@@ -167,6 +175,9 @@ impl Algorithm {
     /// - `ssh-ed25519-cert-v01@openssh.com`
     /// - `sk-ecdsa-sha2-nistp256-cert-v01@openssh.com` (FIDO/U2F key)
     /// - `sk-ssh-ed25519-cert-v01@openssh.com` (FIDO/U2F key)
+    /// - `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` (Browser generated)
+    ///
+    /// Any other algorithms are mapped to the [`Algorithm::Other`] variant.
     ///
     /// [PROTOCOL.certkeys]: https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.certkeys?annotate=HEAD
     pub fn new_certificate(id: &str) -> Result<Self> {
@@ -183,14 +194,24 @@ impl Algorithm {
             }),
             CERT_ED25519 => Ok(Algorithm::Ed25519),
             CERT_RSA => Ok(Algorithm::Rsa { hash: None }),
+            CERT_RSA_SHA2_256 => Ok(Algorithm::Rsa {
+                hash: Some(HashAlg::Sha256),
+            }),
+            CERT_RSA_SHA2_512 => Ok(Algorithm::Rsa {
+                hash: Some(HashAlg::Sha512),
+            }),
             CERT_SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
             CERT_SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
+            CERT_WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::WebauthnEcdsaSha2NistP256),
+            #[cfg(feature = "alloc")]
+            _ => Ok(Algorithm::Other(AlgorithmName::from_certificate_type(id)?)),
+            #[cfg(not(feature = "alloc"))]
             _ => Err(Error::AlgorithmUnknown),
         }
     }
 
     /// Get the string identifier which corresponds to this algorithm.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Algorithm::Dsa => SSH_DSA,
             Algorithm::Ecdsa { curve } => match curve {
@@ -206,6 +227,9 @@ impl Algorithm {
             },
             Algorithm::SkEcdsaSha2NistP256 => SK_ECDSA_SHA2_P256,
             Algorithm::SkEd25519 => SK_SSH_ED25519,
+            Algorithm::WebauthnEcdsaSha2NistP256 => WEBAUTHN_SK_ECDSA_SHA2_P256,
+            #[cfg(feature = "alloc")]
+            Algorithm::Other(algorithm) => algorithm.as_str(),
         }
     }
 
@@ -216,7 +240,8 @@ impl Algorithm {
     /// See [PROTOCOL.certkeys] for more information.
     ///
     /// [PROTOCOL.certkeys]: https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.certkeys?annotate=HEAD
-    pub fn as_certificate_str(self) -> &'static str {
+    #[cfg(feature = "alloc")]
+    pub fn to_certificate_type(&self) -> String {
         match self {
             Algorithm::Dsa => CERT_DSA,
             Algorithm::Ecdsa { curve } => match curve {
@@ -225,10 +250,19 @@ impl Algorithm {
                 EcdsaCurve::NistP521 => CERT_ECDSA_SHA2_P521,
             },
             Algorithm::Ed25519 => CERT_ED25519,
-            Algorithm::Rsa { .. } => CERT_RSA,
+            Algorithm::Rsa { hash: None } => CERT_RSA,
+            Algorithm::Rsa {
+                hash: Some(HashAlg::Sha256),
+            } => CERT_RSA_SHA2_256,
+            Algorithm::Rsa {
+                hash: Some(HashAlg::Sha512),
+            } => CERT_RSA_SHA2_512,
             Algorithm::SkEcdsaSha2NistP256 => CERT_SK_ECDSA_SHA2_P256,
             Algorithm::SkEd25519 => CERT_SK_SSH_ED25519,
+            Algorithm::WebauthnEcdsaSha2NistP256 => CERT_WEBAUTHN_SK_ECDSA_SHA2_P256,
+            Algorithm::Other(algorithm) => return algorithm.certificate_type(),
         }
+        .to_owned()
     }
 
     /// Is the algorithm DSA?
@@ -264,15 +298,7 @@ impl AsRef<str> for Algorithm {
     }
 }
 
-impl Label for Algorithm {
-    type Error = Error;
-}
-
-impl Default for Algorithm {
-    fn default() -> Algorithm {
-        Algorithm::Ed25519
-    }
-}
+impl Label for Algorithm {}
 
 impl fmt::Display for Algorithm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -281,10 +307,36 @@ impl fmt::Display for Algorithm {
 }
 
 impl str::FromStr for Algorithm {
-    type Err = Error;
+    type Err = LabelError;
 
-    fn from_str(id: &str) -> Result<Self> {
-        Self::new(id)
+    fn from_str(id: &str) -> core::result::Result<Self, LabelError> {
+        match id {
+            SSH_DSA => Ok(Algorithm::Dsa),
+            ECDSA_SHA2_P256 => Ok(Algorithm::Ecdsa {
+                curve: EcdsaCurve::NistP256,
+            }),
+            ECDSA_SHA2_P384 => Ok(Algorithm::Ecdsa {
+                curve: EcdsaCurve::NistP384,
+            }),
+            ECDSA_SHA2_P521 => Ok(Algorithm::Ecdsa {
+                curve: EcdsaCurve::NistP521,
+            }),
+            RSA_SHA2_256 => Ok(Algorithm::Rsa {
+                hash: Some(HashAlg::Sha256),
+            }),
+            RSA_SHA2_512 => Ok(Algorithm::Rsa {
+                hash: Some(HashAlg::Sha512),
+            }),
+            SSH_ED25519 => Ok(Algorithm::Ed25519),
+            SSH_RSA => Ok(Algorithm::Rsa { hash: None }),
+            SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
+            SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
+            WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::WebauthnEcdsaSha2NistP256),
+            #[cfg(feature = "alloc")]
+            _ => Ok(Algorithm::Other(AlgorithmName::from_str(id)?)),
+            #[cfg(not(feature = "alloc"))]
+            _ => Err(LabelError::new(id)),
+        }
     }
 }
 
@@ -310,12 +362,7 @@ impl EcdsaCurve {
     /// - `nistp384`
     /// - `nistp521`
     pub fn new(id: &str) -> Result<Self> {
-        match id {
-            "nistp256" => Ok(EcdsaCurve::NistP256),
-            "nistp384" => Ok(EcdsaCurve::NistP384),
-            "nistp521" => Ok(EcdsaCurve::NistP521),
-            _ => Err(Error::AlgorithmUnknown),
-        }
+        Ok(id.parse()?)
     }
 
     /// Get the string identifier which corresponds to this ECDSA elliptic curve.
@@ -344,9 +391,7 @@ impl AsRef<str> for EcdsaCurve {
     }
 }
 
-impl Label for EcdsaCurve {
-    type Error = Error;
-}
+impl Label for EcdsaCurve {}
 
 impl fmt::Display for EcdsaCurve {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -355,18 +400,24 @@ impl fmt::Display for EcdsaCurve {
 }
 
 impl str::FromStr for EcdsaCurve {
-    type Err = Error;
+    type Err = LabelError;
 
-    fn from_str(id: &str) -> Result<Self> {
-        EcdsaCurve::new(id)
+    fn from_str(id: &str) -> core::result::Result<Self, LabelError> {
+        match id {
+            "nistp256" => Ok(EcdsaCurve::NistP256),
+            "nistp384" => Ok(EcdsaCurve::NistP384),
+            "nistp521" => Ok(EcdsaCurve::NistP521),
+            _ => Err(LabelError::new(id)),
+        }
     }
 }
 
 /// Hashing algorithms a.k.a. digest functions.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum HashAlg {
     /// SHA-256
+    #[default]
     Sha256,
 
     /// SHA-512
@@ -381,11 +432,7 @@ impl HashAlg {
     /// - `sha256`
     /// - `sha512`
     pub fn new(id: &str) -> Result<Self> {
-        match id {
-            SHA256 => Ok(HashAlg::Sha256),
-            SHA512 => Ok(HashAlg::Sha512),
-            _ => Err(Error::AlgorithmUnknown),
-        }
+        Ok(id.parse()?)
     }
 
     /// Get the string identifier for this hash algorithm.
@@ -414,19 +461,11 @@ impl HashAlg {
     }
 }
 
-impl Label for HashAlg {
-    type Error = Error;
-}
+impl Label for HashAlg {}
 
 impl AsRef<str> for HashAlg {
     fn as_ref(&self) -> &str {
         self.as_str()
-    }
-}
-
-impl Default for HashAlg {
-    fn default() -> Self {
-        HashAlg::Sha256
     }
 }
 
@@ -437,21 +476,26 @@ impl fmt::Display for HashAlg {
 }
 
 impl str::FromStr for HashAlg {
-    type Err = Error;
+    type Err = LabelError;
 
-    fn from_str(id: &str) -> Result<Self> {
-        HashAlg::new(id)
+    fn from_str(id: &str) -> core::result::Result<Self, LabelError> {
+        match id {
+            SHA256 => Ok(HashAlg::Sha256),
+            SHA512 => Ok(HashAlg::Sha512),
+            _ => Err(LabelError::new(id)),
+        }
     }
 }
 
 /// Key Derivation Function (KDF) algorithms.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum KdfAlg {
     /// None.
     None,
 
     /// bcrypt-pbkdf.
+    #[default]
     Bcrypt,
 }
 
@@ -461,11 +505,7 @@ impl KdfAlg {
     /// # Supported KDF names
     /// - `none`
     pub fn new(kdfname: &str) -> Result<Self> {
-        match kdfname {
-            NONE => Ok(Self::None),
-            BCRYPT => Ok(Self::Bcrypt),
-            _ => Err(Error::AlgorithmUnknown),
-        }
+        Ok(kdfname.parse()?)
     }
 
     /// Get the string identifier which corresponds to this algorithm.
@@ -482,19 +522,11 @@ impl KdfAlg {
     }
 }
 
-impl Label for KdfAlg {
-    type Error = Error;
-}
+impl Label for KdfAlg {}
 
 impl AsRef<str> for KdfAlg {
     fn as_ref(&self) -> &str {
         self.as_str()
-    }
-}
-
-impl Default for KdfAlg {
-    fn default() -> KdfAlg {
-        KdfAlg::Bcrypt
     }
 }
 
@@ -505,9 +537,13 @@ impl fmt::Display for KdfAlg {
 }
 
 impl str::FromStr for KdfAlg {
-    type Err = Error;
+    type Err = LabelError;
 
-    fn from_str(id: &str) -> Result<Self> {
-        Self::new(id)
+    fn from_str(kdfname: &str) -> core::result::Result<Self, LabelError> {
+        match kdfname {
+            NONE => Ok(Self::None),
+            BCRYPT => Ok(Self::Bcrypt),
+            _ => Err(LabelError::new(kdfname)),
+        }
     }
 }

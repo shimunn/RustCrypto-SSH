@@ -6,15 +6,13 @@ use core::fmt::Formatter;
 use encoding::{Decode, Encode, Reader, Writer};
 
 #[cfg(feature = "std")]
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use {
+    core::time::Duration,
+    std::time::{SystemTime, UNIX_EPOCH},
+};
 
-/// Maximum allowed value for a Unix timestamp:
-///
-/// 9999-12-31 23:59:59 UTC
-///
-/// This is a sanity limit intended to catch nonsense values which are
-/// excessively far in the future. Otherwise the limit is `i64::MAX`.
-pub const MAX_SECS: u64 = 253402300799;
+/// Maximum allowed value for a Unix timestamp.
+pub const MAX_SECS: u64 = i64::MAX as u64;
 
 /// Unix timestamps as used in OpenSSH certificates.
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
@@ -59,7 +57,7 @@ impl UnixTime {
     }
 
     /// Get the current time as a Unix timestamp.
-    #[cfg(all(feature = "std"))]
+    #[cfg(feature = "std")]
     pub fn now() -> Result<Self> {
         SystemTime::now().try_into()
     }
@@ -74,13 +72,11 @@ impl Decode for UnixTime {
 }
 
 impl Encode for UnixTime {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok(self.secs.encoded_len()?)
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        self.secs.encoded_len()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.secs.encode(writer)?;
         Ok(())
     }

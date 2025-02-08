@@ -7,9 +7,13 @@
 )]
 #![forbid(unsafe_code)]
 #![warn(
-    clippy::integer_arithmetic,
+    clippy::alloc_instead_of_core,
+    clippy::arithmetic_side_effects,
+    clippy::mod_module_files,
     clippy::panic,
     clippy::panic_in_result_fn,
+    clippy::std_instead_of_alloc,
+    clippy::std_instead_of_core,
     clippy::unwrap_used,
     missing_docs,
     rust_2018_idioms,
@@ -20,39 +24,41 @@
 #[cfg(feature = "alloc")]
 #[macro_use]
 extern crate alloc;
-#[cfg(feature = "std")]
-extern crate std;
 
 mod checked;
 mod decode;
 mod encode;
 mod error;
 mod label;
+#[macro_use]
 mod reader;
 mod writer;
+
+#[cfg(feature = "base64")]
+pub mod base64;
+#[cfg(feature = "pem")]
+pub mod pem;
 
 pub use crate::{
     checked::CheckedSum,
     decode::Decode,
     encode::Encode,
     error::{Error, Result},
-    label::Label,
-    reader::{NestedReader, Reader},
+    label::{Label, LabelError},
+    reader::Reader,
     writer::Writer,
 };
 
 #[cfg(feature = "base64")]
-pub use {
-    crate::{reader::Base64Reader, writer::Base64Writer},
-    base64,
-};
+pub use crate::{base64::Base64Reader, base64::Base64Writer};
+
+#[cfg(feature = "bytes")]
+pub use bytes;
+
+#[cfg(feature = "digest")]
+pub use crate::writer::DigestWriter;
+#[cfg(feature = "digest")]
+pub use digest;
 
 #[cfg(feature = "pem")]
-pub use {
-    crate::{decode::DecodePem, encode::EncodePem},
-    pem::{self, LineEnding},
-};
-
-/// Line width used by the PEM encoding of OpenSSH documents.
-#[cfg(feature = "pem")]
-const PEM_LINE_WIDTH: usize = 70;
+pub use crate::pem::{DecodePem, EncodePem};

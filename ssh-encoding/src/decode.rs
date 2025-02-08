@@ -8,8 +8,8 @@ use crate::{reader::Reader, Error, Result};
 #[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
 
-#[cfg(feature = "pem")]
-use {crate::PEM_LINE_WIDTH, pem::PemLabel};
+#[cfg(feature = "bytes")]
+use bytes::Bytes;
 
 /// Maximum size of a `usize` this library will accept.
 const MAX_SIZE: usize = 0xFFFFF;
@@ -25,29 +25,6 @@ pub trait Decode: Sized {
     fn decode(reader: &mut impl Reader) -> core::result::Result<Self, Self::Error>;
 }
 
-/// Decoding trait for PEM documents.
-///
-/// This is an extension trait which is auto-impl'd for types which impl the
-/// [`Decode`], [`PemLabel`], and [`Sized`] traits.
-#[cfg(feature = "pem")]
-pub trait DecodePem: Decode + PemLabel + Sized {
-    /// Decode the provided PEM-encoded string, interpreting the Base64-encoded
-    /// body of the document using the [`Decode`] trait.
-    fn decode_pem(pem: impl AsRef<[u8]>) -> core::result::Result<Self, Self::Error>;
-}
-
-#[cfg(feature = "pem")]
-impl<T: Decode + PemLabel + Sized> DecodePem for T {
-    fn decode_pem(pem: impl AsRef<[u8]>) -> core::result::Result<Self, Self::Error> {
-        let mut reader =
-            pem::Decoder::new_wrapped(pem.as_ref(), PEM_LINE_WIDTH).map_err(Error::from)?;
-
-        Self::validate_pem_label(reader.type_label()).map_err(Error::from)?;
-        let ret = Self::decode(&mut reader)?;
-        Ok(reader.finish(ret)?)
-    }
-}
-
 /// Decode a single `byte` from the input data.
 impl Decode for u8 {
     type Error = Error;
@@ -56,6 +33,26 @@ impl Decode for u8 {
         let mut buf = [0];
         reader.read(&mut buf)?;
         Ok(buf[0])
+    }
+}
+
+/// Decode a `boolean` as described in [RFC4251 § 5]:
+///
+/// > A boolean value is stored as a single byte.  The value 0
+/// > represents FALSE, and the value 1 represents TRUE.  All non-zero
+/// > values MUST be interpreted as TRUE; however, applications MUST NOT
+/// > store values other than 0 and 1.
+///
+/// [RFC4251 § 5]: https://datatracker.ietf.org/doc/html/rfc4251#section-5
+impl Decode for bool {
+    type Error = Error;
+
+    fn decode(reader: &mut impl Reader) -> Result<Self> {
+        let byte = u8::decode(reader)?;
+        match byte {
+            0 => Ok(false),
+            _ => Ok(true),
+        }
     }
 }
 
@@ -132,11 +129,14 @@ impl<const N: usize> Decode for [u8; N] {
     }
 }
 
-/// Decodes `Vec<u8>` from `byte[n]` as described in [RFC4251 § 5]:
+/// Decodes `Vec<u8>` from `string` as described in [RFC4251 § 5]:
 ///
-/// > A byte represents an arbitrary 8-bit value (octet).  Fixed length
-/// > data is sometimes represented as an array of bytes, written
-/// > `byte[n]`, where n is the number of bytes in the array.
+/// > Arbitrary length binary string.  Strings are allowed to contain
+/// > arbitrary binary data, including null characters and 8-bit
+/// > characters.  They are stored as a uint32 containing its length
+/// > (number of bytes that follow) and zero (= empty string) or more
+/// > bytes that are the value of the string.  Terminating null
+/// > characters are not used.
 ///
 /// [RFC4251 § 5]: https://datatracker.ietf.org/doc/html/rfc4251#section-5
 #[cfg(feature = "alloc")]
@@ -146,7 +146,9 @@ impl Decode for Vec<u8> {
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         reader.read_prefixed(|reader| {
             let mut result = vec![0u8; reader.remaining_len()];
-            reader.read(&mut result)?;
+            if result.capacity() > 0 {
+                reader.read(&mut result)?;
+            }
             Ok(result)
         })
     }
@@ -175,5 +177,21 @@ impl Decode for Vec<String> {
 
             Ok(entries)
         })
+    }
+}
+
+/// Decodes `Bytes` from `byte[n]` as described in [RFC4251 § 5]:
+///
+/// > A byte represents an arbitrary 8-bit value (octet).  Fixed length
+/// > data is sometimes represented as an array of bytes, written
+/// > `byte[n]`, where n is the number of bytes in the array.
+///
+/// [RFC4251 § 5]: https://datatracker.ietf.org/doc/html/rfc4251#section-5
+#[cfg(feature = "bytes")]
+impl Decode for Bytes {
+    type Error = Error;
+
+    fn decode(reader: &mut impl Reader) -> Result<Self> {
+        Vec::<u8>::decode(reader).map(Into::into)
     }
 }

@@ -9,7 +9,10 @@ use zeroize::Zeroize;
 #[cfg(feature = "rsa")]
 use {
     rand_core::CryptoRngCore,
-    rsa::{pkcs1v15, PublicKeyParts},
+    rsa::{
+        pkcs1v15,
+        traits::{PrivateKeyParts, PublicKeyParts},
+    },
     sha2::{digest::const_oid::AssociatedOid, Digest},
 };
 
@@ -17,16 +20,52 @@ use {
 #[derive(Clone)]
 pub struct RsaPrivateKey {
     /// RSA private exponent.
-    pub d: Mpint,
+    d: Mpint,
 
     /// CRT coefficient: `(inverse of q) mod p`.
-    pub iqmp: Mpint,
+    iqmp: Mpint,
 
     /// First prime factor of `n`.
-    pub p: Mpint,
+    p: Mpint,
 
     /// Second prime factor of `n`.
-    pub q: Mpint,
+    q: Mpint,
+}
+
+impl RsaPrivateKey {
+    /// Create a new RSA private key with the following components:
+    ///
+    /// - `d`: RSA private exponent.
+    /// - `iqmp`: CRT coefficient: `(inverse of q) mod p`.
+    /// - `p`: First prime factor of `n`.
+    /// - `q`: Second prime factor of `n`.
+    pub fn new(d: Mpint, iqmp: Mpint, p: Mpint, q: Mpint) -> Result<Self> {
+        if d.is_positive() && iqmp.is_positive() && p.is_positive() && q.is_positive() {
+            Ok(Self { d, iqmp, p, q })
+        } else {
+            Err(Error::FormatEncoding)
+        }
+    }
+
+    /// RSA private exponent.
+    pub fn d(&self) -> &Mpint {
+        &self.d
+    }
+
+    /// CRT coefficient: `(inverse of q) mod p`.
+    pub fn iqmp(&self) -> &Mpint {
+        &self.iqmp
+    }
+
+    /// First prime factor of `n`.
+    pub fn p(&self) -> &Mpint {
+        &self.p
+    }
+
+    /// Second prime factor of `n`.
+    pub fn q(&self) -> &Mpint {
+        &self.q
+    }
 }
 
 impl ConstantTimeEq for RsaPrivateKey {
@@ -54,24 +93,22 @@ impl Decode for RsaPrivateKey {
         let iqmp = Mpint::decode(reader)?;
         let p = Mpint::decode(reader)?;
         let q = Mpint::decode(reader)?;
-        Ok(Self { d, iqmp, p, q })
+        Self::new(d, iqmp, p, q)
     }
 }
 
 impl Encode for RsaPrivateKey {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             self.d.encoded_len()?,
             self.iqmp.encoded_len()?,
             self.p.encoded_len()?,
             self.q.encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.d.encode(writer)?;
         self.iqmp.encode(writer)?;
         self.p.encode(writer)?;
@@ -93,10 +130,10 @@ impl Drop for RsaPrivateKey {
 #[derive(Clone)]
 pub struct RsaKeypair {
     /// Public key.
-    pub public: RsaPublicKey,
+    public: RsaPublicKey,
 
     /// Private key.
-    pub private: RsaPrivateKey,
+    private: RsaPrivateKey,
 }
 
 impl RsaKeypair {
@@ -112,6 +149,27 @@ impl RsaKeypair {
         } else {
             Err(Error::Crypto)
         }
+    }
+
+    /// Create a new keypair from the given `public` and `private` key components.
+    pub fn new(public: RsaPublicKey, private: RsaPrivateKey) -> Result<Self> {
+        // TODO(tarcieri): perform validation that the public and private components match?
+        Ok(Self { public, private })
+    }
+
+    /// Get the size of the RSA modulus in bits.
+    pub fn key_size(&self) -> u32 {
+        self.public.key_size()
+    }
+
+    /// Get the public component of the keypair.
+    pub fn public(&self) -> &RsaPublicKey {
+        &self.public
+    }
+
+    /// Get the private component of the keypair.
+    pub fn private(&self) -> &RsaPrivateKey {
+        &self.private
     }
 }
 
@@ -135,27 +193,25 @@ impl Decode for RsaKeypair {
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         let n = Mpint::decode(reader)?;
         let e = Mpint::decode(reader)?;
-        let public = RsaPublicKey { n, e };
+        let public = RsaPublicKey::new(e, n)?;
         let private = RsaPrivateKey::decode(reader)?;
-        Ok(RsaKeypair { public, private })
+        Self::new(public, private)
     }
 }
 
 impl Encode for RsaKeypair {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
-            self.public.n.encoded_len()?,
-            self.public.e.encoded_len()?,
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
+            self.public.n().encoded_len()?,
+            self.public.e().encoded_len()?,
             self.private.encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
-        self.public.n.encode(writer)?;
-        self.public.e.encode(writer)?;
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
+        self.public.n().encode(writer)?;
+        self.public.e().encode(writer)?;
         self.private.encode(writer)
     }
 }
@@ -195,12 +251,12 @@ impl TryFrom<&RsaKeypair> for rsa::RsaPrivateKey {
 
     fn try_from(key: &RsaKeypair) -> Result<rsa::RsaPrivateKey> {
         let ret = rsa::RsaPrivateKey::from_components(
-            rsa::BigUint::try_from(&key.public.n)?,
-            rsa::BigUint::try_from(&key.public.e)?,
+            rsa::BigUint::try_from(key.public.n())?,
+            rsa::BigUint::try_from(key.public.e())?,
             rsa::BigUint::try_from(&key.private.d)?,
             vec![
                 rsa::BigUint::try_from(&key.private.p)?,
-                rsa::BigUint::try_from(&key.private.p)?,
+                rsa::BigUint::try_from(&key.private.q)?,
             ],
         )?;
 
@@ -256,6 +312,6 @@ where
     type Error = Error;
 
     fn try_from(keypair: &RsaKeypair) -> Result<pkcs1v15::SigningKey<D>> {
-        Ok(pkcs1v15::SigningKey::new_with_prefix(keypair.try_into()?))
+        Ok(pkcs1v15::SigningKey::new(keypair.try_into()?))
     }
 }

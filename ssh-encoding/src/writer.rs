@@ -5,12 +5,11 @@ use crate::Result;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-#[cfg(feature = "sha2")]
-use sha2::{Digest, Sha256, Sha512};
+#[cfg(feature = "bytes")]
+use bytes::{BufMut, BytesMut};
 
-/// Constant-time Base64 writer implementation.
-#[cfg(feature = "base64")]
-pub type Base64Writer<'o> = base64::Encoder<'o, base64::Base64>;
+#[cfg(feature = "digest")]
+use digest::Digest;
 
 /// Writer trait which encodes the SSH binary format to various output
 /// encodings.
@@ -27,32 +26,28 @@ impl Writer for Vec<u8> {
     }
 }
 
-#[cfg(feature = "base64")]
-impl Writer for Base64Writer<'_> {
+#[cfg(feature = "bytes")]
+impl Writer for BytesMut {
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        Ok(self.encode(bytes)?)
-    }
-}
-
-#[cfg(feature = "pem")]
-impl Writer for pem::Encoder<'_, '_> {
-    fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        Ok(self.encode(bytes)?)
-    }
-}
-
-#[cfg(feature = "sha2")]
-impl Writer for Sha256 {
-    fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.update(bytes);
+        self.put(bytes);
         Ok(())
     }
 }
 
-#[cfg(feature = "sha2")]
-impl Writer for Sha512 {
+/// Wrapper for digests.
+///
+/// This allows to update digests from the serializer directly.
+#[cfg(feature = "digest")]
+#[derive(Debug)]
+pub struct DigestWriter<'d, D>(pub &'d mut D);
+
+#[cfg(feature = "digest")]
+impl<D> Writer for DigestWriter<'_, D>
+where
+    D: Digest,
+{
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.update(bytes);
+        self.0.update(bytes);
         Ok(())
     }
 }

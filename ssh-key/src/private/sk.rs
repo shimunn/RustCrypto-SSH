@@ -26,6 +26,27 @@ pub struct SkEcdsaSha2NistP256 {
 
 #[cfg(feature = "ecdsa")]
 impl SkEcdsaSha2NistP256 {
+    /// Construct new instance of SkEcdsaSha2NistP256.
+    #[cfg(feature = "alloc")]
+    pub fn new(
+        public: public::SkEcdsaSha2NistP256,
+        flags: u8,
+        key_handle: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        let key_handle = key_handle.into();
+
+        if key_handle.len() <= 255 {
+            Ok(SkEcdsaSha2NistP256 {
+                public,
+                flags,
+                key_handle,
+                reserved: Vec::<u8>::new(),
+            })
+        } else {
+            Err(encoding::Error::Length.into())
+        }
+    }
+
     /// Get the ECDSA/NIST P-256 public key.
     pub fn public(&self) -> &public::SkEcdsaSha2NistP256 {
         &self.public
@@ -58,19 +79,17 @@ impl Decode for SkEcdsaSha2NistP256 {
 
 #[cfg(feature = "ecdsa")]
 impl Encode for SkEcdsaSha2NistP256 {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             self.public.encoded_len()?,
             self.flags.encoded_len()?,
             self.key_handle.encoded_len()?,
             self.reserved.encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.public.encode(writer)?;
         self.flags.encode(writer)?;
         self.key_handle.encode(writer)?;
@@ -98,6 +117,27 @@ pub struct SkEd25519 {
 }
 
 impl SkEd25519 {
+    /// Construct new instance of SkEd25519.
+    #[cfg(feature = "alloc")]
+    pub fn new(
+        public: public::SkEd25519,
+        flags: u8,
+        key_handle: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        let key_handle = key_handle.into();
+
+        if key_handle.len() <= 255 {
+            Ok(SkEd25519 {
+                public,
+                flags,
+                key_handle,
+                reserved: Vec::<u8>::new(),
+            })
+        } else {
+            Err(encoding::Error::Length.into())
+        }
+    }
+
     /// Get the Ed25519 public key.
     pub fn public(&self) -> &public::SkEd25519 {
         &self.public
@@ -128,19 +168,17 @@ impl Decode for SkEd25519 {
 }
 
 impl Encode for SkEd25519 {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
             self.public.encoded_len()?,
             self.flags.encoded_len()?,
             self.key_handle.encoded_len()?,
             self.reserved.encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.public.encode(writer)?;
         self.flags.encode(writer)?;
         self.key_handle.encode(writer)?;

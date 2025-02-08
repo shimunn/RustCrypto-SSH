@@ -10,7 +10,7 @@ use core::{
 };
 use encoding::{
     base64::{Base64Unpadded, Encoding},
-    Encode,
+    DigestWriter, Encode,
 };
 use sha2::{Digest, Sha256, Sha512};
 
@@ -43,7 +43,7 @@ use serde::{de, ser, Deserialize, Serialize};
 ///
 /// When the `serde` feature of this crate is enabled, this type receives impls
 /// of [`Deserialize`][`serde::Deserialize`] and [`Serialize`][`serde::Serialize`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Fingerprint {
     /// Fingerprints computed using SHA-256.
@@ -63,12 +63,16 @@ impl Fingerprint {
         match algorithm {
             HashAlg::Sha256 => {
                 let mut digest = Sha256::new();
-                public_key.encode(&mut digest).expect(FINGERPRINT_ERR_MSG);
+                public_key
+                    .encode(&mut DigestWriter(&mut digest))
+                    .expect(FINGERPRINT_ERR_MSG);
                 Self::Sha256(digest.finalize().into())
             }
             HashAlg::Sha512 => {
                 let mut digest = Sha512::new();
-                public_key.encode(&mut digest).expect(FINGERPRINT_ERR_MSG);
+                public_key
+                    .encode(&mut DigestWriter(&mut digest))
+                    .expect(FINGERPRINT_ERR_MSG);
                 Self::Sha512(digest.finalize().into())
             }
         }

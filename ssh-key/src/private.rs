@@ -111,6 +111,8 @@ mod ecdsa;
 mod ed25519;
 mod keypair;
 #[cfg(feature = "alloc")]
+mod opaque;
+#[cfg(feature = "alloc")]
 mod rsa;
 #[cfg(feature = "alloc")]
 mod sk;
@@ -124,6 +126,7 @@ pub use self::{
 pub use crate::{
     private::{
         dsa::{DsaKeypair, DsaPrivateKey},
+        opaque::{OpaqueKeypair, OpaqueKeypairBytes, OpaquePrivateKeyBytes},
         rsa::{RsaKeypair, RsaPrivateKey},
         sk::SkEd25519,
     },
@@ -136,9 +139,8 @@ pub use self::ecdsa::{EcdsaKeypair, EcdsaPrivateKey};
 #[cfg(all(feature = "alloc", feature = "ecdsa"))]
 pub use self::sk::SkEcdsaSha2NistP256;
 
-use crate::{
-    cipher::Tag, public, Algorithm, Cipher, Error, Fingerprint, HashAlg, Kdf, PublicKey, Result,
-};
+use crate::{public, Algorithm, Cipher, Error, Fingerprint, HashAlg, Kdf, PublicKey, Result};
+use cipher::Tag;
 use core::str;
 use encoding::{
     pem::{LineEnding, PemLabel},
@@ -244,14 +246,14 @@ impl PrivateKey {
         line_ending: LineEnding,
         out: &'o mut [u8],
     ) -> Result<&'o str> {
-        self.encode_pem(line_ending, out)
+        Ok(self.encode_pem(line_ending, out)?)
     }
 
     /// Encode an OpenSSH-formatted PEM private key, allocating a
     /// self-zeroizing [`String`] for the result.
     #[cfg(feature = "alloc")]
     pub fn to_openssh(&self, line_ending: LineEnding) -> Result<Zeroizing<String>> {
-        self.encode_pem_string(line_ending).map(Zeroizing::new)
+        Ok(self.encode_pem_string(line_ending).map(Zeroizing::new)?)
     }
 
     /// Serialize SSH private key as raw bytes.
@@ -272,6 +274,40 @@ impl PrivateKey {
     /// ```
     ///
     /// See [PROTOCOL.sshsig] for more information.
+    ///
+    /// # Usage
+    ///
+    /// See also: [`PublicKey::verify`].
+    ///
+    #[cfg_attr(feature = "ed25519", doc = "```")]
+    #[cfg_attr(not(feature = "ed25519"), doc = "```ignore")]
+    /// # fn main() -> Result<(), ssh_key::Error> {
+    /// use ssh_key::{PrivateKey, HashAlg, SshSig};
+    ///
+    /// // Message to be signed.
+    /// let message = b"testing";
+    ///
+    /// // Example domain/namespace used for the message.
+    /// let namespace = "example";
+    ///
+    /// // Private key to use when computing the signature.
+    /// // WARNING: don't actually hardcode private keys in source code!!!
+    /// let encoded_private_key = r#"
+    /// -----BEGIN OPENSSH PRIVATE KEY-----
+    /// b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+    /// QyNTUxOQAAACCzPq7zfqLffKoBDe/eo04kH2XxtSmk9D7RQyf1xUqrYgAAAJgAIAxdACAM
+    /// XQAAAAtzc2gtZWQyNTUxOQAAACCzPq7zfqLffKoBDe/eo04kH2XxtSmk9D7RQyf1xUqrYg
+    /// AAAEC2BsIi0QwW2uFscKTUUXNHLsYX4FxlaSDSblbAj7WR7bM+rvN+ot98qgEN796jTiQf
+    /// ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
+    /// -----END OPENSSH PRIVATE KEY-----
+    /// "#;
+    ///
+    /// let private_key = encoded_private_key.parse::<PrivateKey>()?;
+    /// let signature = private_key.sign(namespace, HashAlg::default(), message)?;
+    /// // assert!(private_key.public_key().verify(namespace, message, &signature).is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// [PROTOCOL.sshsig]: https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.sshsig?annotate=HEAD
     #[cfg(feature = "alloc")]
@@ -339,7 +375,7 @@ impl PrivateKey {
         rng: &mut impl CryptoRngCore,
         password: impl AsRef<[u8]>,
     ) -> Result<Self> {
-        self.encrypt_with_cipher(rng, Cipher::default(), password)
+        self.encrypt_with_cipher(rng, Cipher::Aes256Ctr, password)
     }
 
     /// Encrypt an unencrypted private key using the provided password to
@@ -454,7 +490,7 @@ impl PrivateKey {
         let key_data = match algorithm {
             #[cfg(feature = "dsa")]
             Algorithm::Dsa => KeypairData::from(DsaKeypair::random(rng)?),
-            #[cfg(any(feature = "p256", feature = "p384"))]
+            #[cfg(any(feature = "p256", feature = "p384", feature = "p521"))]
             Algorithm::Ecdsa { curve } => KeypairData::from(EcdsaKeypair::random(rng, curve)?),
             #[cfg(feature = "ed25519")]
             Algorithm::Ed25519 => KeypairData::from(Ed25519Keypair::random(rng)),
@@ -575,7 +611,7 @@ impl PrivateKey {
         writer: &mut impl Writer,
         cipher: Cipher,
         checkint: u32,
-    ) -> Result<()> {
+    ) -> encoding::Result<()> {
         let unpadded_len = self.unpadded_privatekey_comment_pair_len()?;
         let padding_len = cipher.padding_len(unpadded_len);
 
@@ -589,27 +625,25 @@ impl PrivateKey {
 
     /// Get the length of this private key when encoded with the given comment
     /// and padded using the padding size for the given cipher.
-    fn encoded_privatekey_comment_pair_len(&self, cipher: Cipher) -> Result<usize> {
+    fn encoded_privatekey_comment_pair_len(&self, cipher: Cipher) -> encoding::Result<usize> {
         let len = self.unpadded_privatekey_comment_pair_len()?;
-        Ok([len, cipher.padding_len(len)].checked_sum()?)
+        [len, cipher.padding_len(len)].checked_sum()
     }
 
     /// Get the length of this private key when encoded with the given comment.
     ///
     /// This length is just the checkints, private key data, and comment sans
     /// any padding.
-    fn unpadded_privatekey_comment_pair_len(&self) -> Result<usize> {
+    fn unpadded_privatekey_comment_pair_len(&self) -> encoding::Result<usize> {
         // This method is intended for use with unencrypted keys only
-        if self.is_encrypted() {
-            return Err(Error::Encrypted);
-        }
+        debug_assert!(!self.is_encrypted(), "called on encrypted key");
 
-        Ok([
+        [
             8, // 2 x uint32 checkints,
             self.key_data.encoded_len()?,
             self.comment().encoded_len()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 }
 
@@ -705,16 +739,14 @@ impl Decode for PrivateKey {
 }
 
 impl Encode for PrivateKey {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
+    fn encoded_len(&self) -> encoding::Result<usize> {
         let private_key_len = if self.is_encrypted() {
             self.key_data.encoded_len_prefixed()?
         } else {
             [4, self.encoded_privatekey_comment_pair_len(Cipher::None)?].checked_sum()?
         };
 
-        Ok([
+        [
             Self::AUTH_MAGIC.len(),
             self.cipher.encoded_len()?,
             self.kdf.encoded_len()?,
@@ -723,10 +755,10 @@ impl Encode for PrivateKey {
             private_key_len,
             self.auth_tag.map(|tag| tag.len()).unwrap_or(0),
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         writer.write(Self::AUTH_MAGIC)?;
         self.cipher.encode(writer)?;
         self.kdf.encode(writer)?;

@@ -87,13 +87,22 @@ impl Kdf {
         password: impl AsRef<[u8]>,
     ) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
         let (key_size, iv_size) = cipher.key_and_iv_size().ok_or(Error::Decrypted)?;
+
         let okm_size = key_size
             .checked_add(iv_size)
             .ok_or(encoding::Error::Length)?;
 
         let mut okm = Zeroizing::new(vec![0u8; okm_size]);
         self.derive(password, &mut okm)?;
-        let iv = okm.split_off(key_size);
+        let mut iv = okm.split_off(key_size);
+
+        // For whatever reason `chacha20-poly1305@openssh.com` uses a nonce of all zeros for private
+        // key encryption, relying on a unique salt used in the password-based encryption key
+        // derivation to ensure that each encryption key is only used once.
+        if cipher == Cipher::ChaCha20Poly1305 {
+            iv.copy_from_slice(&cipher::ChaChaNonce::default());
+        }
+
         Ok((okm, iv))
     }
 
@@ -149,19 +158,17 @@ impl Decode for Kdf {
 }
 
 impl Encode for Kdf {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
+    fn encoded_len(&self) -> encoding::Result<usize> {
         let kdfopts_prefixed_len = match self {
             Self::None => 4,
             #[cfg(feature = "alloc")]
             Self::Bcrypt { salt, .. } => [12, salt.len()].checked_sum()?,
         };
 
-        Ok([self.algorithm().encoded_len()?, kdfopts_prefixed_len].checked_sum()?)
+        [self.algorithm().encoded_len()?, kdfopts_prefixed_len].checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.algorithm().encode(writer)?;
 
         match self {

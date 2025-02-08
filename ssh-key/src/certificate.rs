@@ -8,7 +8,6 @@ mod unix_time;
 
 pub use self::{builder::Builder, cert_type::CertType, field::Field, options_map::OptionsMap};
 
-use self::unix_time::UnixTime;
 use crate::{
     public::{KeyData, SshFormat},
     Algorithm, Error, Fingerprint, HashAlg, Result, Signature,
@@ -26,7 +25,10 @@ use signature::Verifier;
 use serde::{de, ser, Deserialize, Serialize};
 
 #[cfg(feature = "std")]
-use std::{fs, path::Path, time::SystemTime};
+use {
+    self::unix_time::UnixTime,
+    std::{fs, path::Path, time::SystemTime},
+};
 
 /// OpenSSH certificate as specified in [PROTOCOL.certkeys].
 ///
@@ -137,10 +139,10 @@ pub struct Certificate {
     valid_principals: Vec<String>,
 
     /// Valid after.
-    valid_after: UnixTime,
+    valid_after: u64,
 
     /// Valid before.
-    valid_before: UnixTime,
+    valid_before: u64,
 
     /// Critical options.
     critical_options: OptionsMap,
@@ -176,7 +178,7 @@ impl Certificate {
         let mut cert = Certificate::decode(&mut reader)?;
 
         // Verify that the algorithm in the Base64-encoded data matches the text
-        if encapsulation.algorithm_id != cert.algorithm().as_certificate_str() {
+        if encapsulation.algorithm_id != cert.algorithm().to_certificate_type() {
             return Err(Error::AlgorithmUnknown);
         }
 
@@ -193,14 +195,16 @@ impl Certificate {
 
     /// Encode OpenSSH certificate to a [`String`].
     pub fn to_openssh(&self) -> Result<String> {
-        SshFormat::encode_string(self.algorithm().as_certificate_str(), self, self.comment())
+        SshFormat::encode_string(
+            &self.algorithm().to_certificate_type(),
+            self,
+            self.comment(),
+        )
     }
 
     /// Serialize OpenSSH certificate as raw bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut cert_bytes = Vec::new();
-        self.encode(&mut cert_bytes)?;
-        Ok(cert_bytes)
+        Ok(self.encode_vec()?)
     }
 
     /// Read OpenSSH certificate from a file.
@@ -277,26 +281,34 @@ impl Certificate {
         &self.valid_principals
     }
 
-    /// Valid after (Unix time).
+    /// Valid after (Unix time), i.e. certificate issuance time.
     pub fn valid_after(&self) -> u64 {
-        self.valid_after.into()
+        self.valid_after
     }
 
-    /// Valid before (Unix time).
+    /// Valid before (Unix time), i.e. certificate expiration time.
     pub fn valid_before(&self) -> u64 {
-        self.valid_before.into()
+        self.valid_before
     }
 
-    /// Valid after (system time).
+    /// Valid after (system time), i.e. certificate issuance time.
+    ///
+    /// # Returns
+    /// - `Some` if the `u64` value is a valid `SystemTime`
+    /// - `None` if it is not (i.e. overflows `i64`)
     #[cfg(feature = "std")]
-    pub fn valid_after_time(&self) -> SystemTime {
-        self.valid_after.into()
+    pub fn valid_after_time(&self) -> Option<SystemTime> {
+        UnixTime::try_from(self.valid_after).ok().map(Into::into)
     }
 
-    /// Valid before (system time).
+    /// Valid before (system time), i.e. certificate expiration time.
+    ///
+    /// # Returns
+    /// - `Some` if the `u64` value is a valid `SystemTime`
+    /// - `None` if it is not (i.e. overflows `i64`, effectively never-expiring)
     #[cfg(feature = "std")]
-    pub fn valid_before_time(&self) -> SystemTime {
-        self.valid_before.into()
+    pub fn valid_before_time(&self) -> Option<SystemTime> {
+        UnixTime::try_from(self.valid_before).ok().map(Into::into)
     }
 
     /// The critical options section of the certificate specifies zero or more
@@ -387,8 +399,6 @@ impl Certificate {
             return Err(Error::CertificateValidation);
         }
 
-        let unix_timestamp = UnixTime::new(unix_timestamp)?;
-
         // From PROTOCOL.certkeys:
         //
         //  "valid after" and "valid before" specify a validity period for the
@@ -428,8 +438,8 @@ impl Certificate {
 
     /// Encode the portion of the certificate "to be signed" by the CA
     /// (or to be verified against an existing CA signature)
-    fn encode_tbs(&self, writer: &mut impl Writer) -> Result<()> {
-        self.algorithm().as_certificate_str().encode(writer)?;
+    fn encode_tbs(&self, writer: &mut impl Writer) -> encoding::Result<()> {
+        self.algorithm().to_certificate_type().encode(writer)?;
         self.nonce.encode(writer)?;
         self.public_key.encode_key_data(writer)?;
         self.serial.encode(writer)?;
@@ -443,14 +453,9 @@ impl Certificate {
         self.reserved.encode(writer)?;
         self.signature_key.encode_prefixed(writer)
     }
-}
 
-impl Decode for Certificate {
-    type Error = Error;
-
-    fn decode(reader: &mut impl Reader) -> Result<Self> {
-        let algorithm = Algorithm::new_certificate(&String::decode(reader)?)?;
-
+    /// Decode [`Certificate`] for the specified algorithm.
+    pub fn decode_as(reader: &mut impl Reader, algorithm: Algorithm) -> Result<Self> {
         Ok(Self {
             nonce: Vec::decode(reader)?,
             public_key: KeyData::decode_as(reader, algorithm)?,
@@ -458,8 +463,8 @@ impl Decode for Certificate {
             cert_type: CertType::decode(reader)?,
             key_id: String::decode(reader)?,
             valid_principals: Vec::decode(reader)?,
-            valid_after: UnixTime::decode(reader)?,
-            valid_before: UnixTime::decode(reader)?,
+            valid_after: u64::decode(reader)?,
+            valid_before: u64::decode(reader)?,
             critical_options: OptionsMap::decode(reader)?,
             extensions: OptionsMap::decode(reader)?,
             reserved: Vec::decode(reader)?,
@@ -470,12 +475,19 @@ impl Decode for Certificate {
     }
 }
 
-impl Encode for Certificate {
+impl Decode for Certificate {
     type Error = Error;
 
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([
-            self.algorithm().as_certificate_str().encoded_len()?,
+    fn decode(reader: &mut impl Reader) -> Result<Self> {
+        let algorithm = Algorithm::new_certificate(&String::decode(reader)?)?;
+        Self::decode_as(reader, algorithm)
+    }
+}
+
+impl Encode for Certificate {
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [
+            self.algorithm().to_certificate_type().encoded_len()?,
             self.nonce.encoded_len()?,
             self.public_key.encoded_key_data_len()?,
             self.serial.encoded_len()?,
@@ -490,10 +502,10 @@ impl Encode for Certificate {
             self.signature_key.encoded_len_prefixed()?,
             self.signature.encoded_len_prefixed()?,
         ]
-        .checked_sum()?)
+        .checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.encode_tbs(writer)?;
         self.signature.encode_prefixed(writer)
     }
@@ -507,6 +519,7 @@ impl FromStr for Certificate {
     }
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for Certificate {
     fn to_string(&self) -> String {
         self.to_openssh().expect("SSH certificate encoding error")

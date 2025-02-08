@@ -22,6 +22,15 @@ pub struct DsaPrivateKey {
 }
 
 impl DsaPrivateKey {
+    /// Create a new DSA private key given the value `x`.
+    pub fn new(x: Mpint) -> Result<Self> {
+        if x.is_positive() {
+            Ok(Self { inner: x })
+        } else {
+            Err(Error::FormatEncoding)
+        }
+    }
+
     /// Get the serialized private key as bytes.
     pub fn as_bytes(&self) -> &[u8] {
         self.inner.as_bytes()
@@ -57,20 +66,16 @@ impl Decode for DsaPrivateKey {
     type Error = Error;
 
     fn decode(reader: &mut impl Reader) -> Result<Self> {
-        Ok(Self {
-            inner: Mpint::decode(reader)?,
-        })
+        Self::new(Mpint::decode(reader)?)
     }
 }
 
 impl Encode for DsaPrivateKey {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
+    fn encoded_len(&self) -> encoding::Result<usize> {
         self.inner.encoded_len()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.inner.encode(writer)
     }
 }
@@ -129,10 +134,10 @@ impl TryFrom<&dsa::SigningKey> for DsaPrivateKey {
 #[derive(Clone)]
 pub struct DsaKeypair {
     /// Public key.
-    pub public: DsaPublicKey,
+    public: DsaPublicKey,
 
     /// Private key.
-    pub private: DsaPrivateKey,
+    private: DsaPrivateKey,
 }
 
 impl DsaKeypair {
@@ -146,6 +151,22 @@ impl DsaKeypair {
     pub fn random(rng: &mut impl CryptoRngCore) -> Result<Self> {
         let components = dsa::Components::generate(rng, Self::KEY_SIZE);
         dsa::SigningKey::generate(rng, components).try_into()
+    }
+
+    /// Create a new [`DsaKeypair`] with the given `public` and `private` components.
+    pub fn new(public: DsaPublicKey, private: DsaPrivateKey) -> Result<Self> {
+        // TODO(tarcieri): validate the `public` and `private` components match
+        Ok(Self { public, private })
+    }
+
+    /// Get the public component of this key.
+    pub fn public(&self) -> &DsaPublicKey {
+        &self.public
+    }
+
+    /// Get the private component of this key.
+    pub fn private(&self) -> &DsaPrivateKey {
+        &self.private
     }
 }
 
@@ -169,18 +190,16 @@ impl Decode for DsaKeypair {
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         let public = DsaPublicKey::decode(reader)?;
         let private = DsaPrivateKey::decode(reader)?;
-        Ok(DsaKeypair { public, private })
+        DsaKeypair::new(public, private)
     }
 }
 
 impl Encode for DsaKeypair {
-    type Error = Error;
-
-    fn encoded_len(&self) -> Result<usize> {
-        Ok([self.public.encoded_len()?, self.private.encoded_len()?].checked_sum()?)
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        [self.public.encoded_len()?, self.private.encoded_len()?].checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
         self.public.encode(writer)?;
         self.private.encode(writer)
     }

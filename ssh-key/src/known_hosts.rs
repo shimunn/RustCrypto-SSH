@@ -46,7 +46,7 @@ const MAGIC_HASH_PREFIX: &str = "|1|";
 ///   the key).
 pub struct KnownHosts<'a> {
     /// Lines of the file being iterated over
-    lines: core::str::Lines<'a>,
+    lines: str::Lines<'a>,
 }
 
 impl<'a> KnownHosts<'a> {
@@ -169,6 +169,7 @@ impl str::FromStr for Entry {
     }
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for Entry {
     fn to_string(&self) -> String {
         let mut s = String::new();
@@ -273,6 +274,7 @@ impl str::FromStr for HostPatterns {
     }
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for HostPatterns {
     fn to_string(&self) -> String {
         match &self {

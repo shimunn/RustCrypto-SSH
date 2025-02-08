@@ -7,7 +7,7 @@ use subtle::{Choice, ConstantTimeEq};
 
 #[cfg(feature = "alloc")]
 use {
-    super::{DsaKeypair, RsaKeypair, SkEd25519},
+    super::{DsaKeypair, OpaqueKeypair, RsaKeypair, SkEd25519},
     alloc::vec::Vec,
 };
 
@@ -55,6 +55,10 @@ pub enum KeypairData {
     /// [PROTOCOL.u2f]: https://cvsweb.openbsd.org/src/usr.bin/ssh/PROTOCOL.u2f?annotate=HEAD
     #[cfg(feature = "alloc")]
     SkEd25519(SkEd25519),
+
+    /// Opaque keypair.
+    #[cfg(feature = "alloc")]
+    Other(OpaqueKeypair),
 }
 
 impl KeypairData {
@@ -74,6 +78,8 @@ impl KeypairData {
             Self::SkEcdsaSha2NistP256(_) => Algorithm::SkEcdsaSha2NistP256,
             #[cfg(feature = "alloc")]
             Self::SkEd25519(_) => Algorithm::SkEd25519,
+            #[cfg(feature = "alloc")]
+            Self::Other(key) => key.algorithm(),
         })
     }
 
@@ -140,6 +146,15 @@ impl KeypairData {
         }
     }
 
+    /// Get the custom, opaque private key if this key is the correct type.
+    #[cfg(feature = "alloc")]
+    pub fn other(&self) -> Option<&OpaqueKeypair> {
+        match self {
+            Self::Other(key) => Some(key),
+            _ => None,
+        }
+    }
+
     /// Is this key a DSA key?
     #[cfg(feature = "alloc")]
     pub fn is_dsa(&self) -> bool {
@@ -187,6 +202,12 @@ impl KeypairData {
         matches!(self, Self::SkEd25519(_))
     }
 
+    /// Is this a key with a custom algorithm?
+    #[cfg(feature = "alloc")]
+    pub fn is_other(&self) -> bool {
+        matches!(self, Self::Other(_))
+    }
+
     /// Compute a deterministic "checkint" for this private key.
     ///
     /// This is a sort of primitive pseudo-MAC used by the OpenSSH key format.
@@ -194,18 +215,20 @@ impl KeypairData {
     pub(super) fn checkint(&self) -> u32 {
         let bytes = match self {
             #[cfg(feature = "alloc")]
-            Self::Dsa(dsa) => dsa.private.as_bytes(),
+            Self::Dsa(dsa) => dsa.private().as_bytes(),
             #[cfg(feature = "ecdsa")]
             Self::Ecdsa(ecdsa) => ecdsa.private_key_bytes(),
             Self::Ed25519(ed25519) => ed25519.private.as_ref(),
             #[cfg(feature = "alloc")]
             Self::Encrypted(ciphertext) => ciphertext.as_ref(),
             #[cfg(feature = "alloc")]
-            Self::Rsa(rsa) => rsa.private.d.as_bytes(),
+            Self::Rsa(rsa) => rsa.private().d().as_bytes(),
             #[cfg(all(feature = "alloc", feature = "ecdsa"))]
             Self::SkEcdsaSha2NistP256(sk) => sk.key_handle(),
             #[cfg(feature = "alloc")]
             Self::SkEd25519(sk) => sk.key_handle(),
+            #[cfg(feature = "alloc")]
+            Self::Other(key) => key.private.as_ref(),
         };
 
         let mut n = 0u32;
@@ -215,6 +238,34 @@ impl KeypairData {
         }
 
         n
+    }
+
+    /// Decode [`KeypairData`] for the specified algorithm.
+    pub fn decode_as(reader: &mut impl Reader, algorithm: Algorithm) -> Result<Self> {
+        match algorithm {
+            #[cfg(feature = "alloc")]
+            Algorithm::Dsa => DsaKeypair::decode(reader).map(Self::Dsa),
+            #[cfg(feature = "ecdsa")]
+            Algorithm::Ecdsa { curve } => match EcdsaKeypair::decode(reader)? {
+                keypair if keypair.curve() == curve => Ok(Self::Ecdsa(keypair)),
+                _ => Err(Error::AlgorithmUnknown),
+            },
+            Algorithm::Ed25519 => Ed25519Keypair::decode(reader).map(Self::Ed25519),
+            #[cfg(feature = "alloc")]
+            Algorithm::Rsa { .. } => RsaKeypair::decode(reader).map(Self::Rsa),
+            #[cfg(all(feature = "alloc", feature = "ecdsa"))]
+            Algorithm::SkEcdsaSha2NistP256 => {
+                SkEcdsaSha2NistP256::decode(reader).map(Self::SkEcdsaSha2NistP256)
+            }
+            #[cfg(feature = "alloc")]
+            Algorithm::SkEd25519 => SkEd25519::decode(reader).map(Self::SkEd25519),
+            #[cfg(feature = "alloc")]
+            algorithm @ Algorithm::Other(_) => {
+                OpaqueKeypair::decode_as(reader, algorithm).map(Self::Other)
+            }
+            #[allow(unreachable_patterns)]
+            _ => Err(Error::AlgorithmUnknown),
+        }
     }
 }
 
@@ -243,6 +294,8 @@ impl ConstantTimeEq for KeypairData {
                 // The key structs contain all public data.
                 Choice::from((a == b) as u8)
             }
+            #[cfg(feature = "alloc")]
+            (Self::Other(a), Self::Other(b)) => a.ct_eq(b),
             #[allow(unreachable_patterns)]
             _ => Choice::from(0),
         }
@@ -261,33 +314,20 @@ impl Decode for KeypairData {
     type Error = Error;
 
     fn decode(reader: &mut impl Reader) -> Result<Self> {
-        match Algorithm::decode(reader)? {
-            #[cfg(feature = "alloc")]
-            Algorithm::Dsa => DsaKeypair::decode(reader).map(Self::Dsa),
-            #[cfg(feature = "ecdsa")]
-            Algorithm::Ecdsa { curve } => match EcdsaKeypair::decode(reader)? {
-                keypair if keypair.curve() == curve => Ok(Self::Ecdsa(keypair)),
-                _ => Err(Error::AlgorithmUnknown),
-            },
-            Algorithm::Ed25519 => Ed25519Keypair::decode(reader).map(Self::Ed25519),
-            #[cfg(feature = "alloc")]
-            Algorithm::Rsa { .. } => RsaKeypair::decode(reader).map(Self::Rsa),
-            #[cfg(all(feature = "alloc", feature = "ecdsa"))]
-            Algorithm::SkEcdsaSha2NistP256 => {
-                SkEcdsaSha2NistP256::decode(reader).map(Self::SkEcdsaSha2NistP256)
-            }
-            #[cfg(feature = "alloc")]
-            Algorithm::SkEd25519 => SkEd25519::decode(reader).map(Self::SkEd25519),
-            #[allow(unreachable_patterns)]
-            _ => Err(Error::AlgorithmUnknown),
-        }
+        let algorithm = Algorithm::decode(reader)?;
+        Self::decode_as(reader, algorithm)
     }
 }
 
 impl Encode for KeypairData {
-    type Error = Error;
+    fn encoded_len(&self) -> encoding::Result<usize> {
+        let alg_len = self
+            .algorithm()
+            .ok()
+            .map(|alg| alg.encoded_len())
+            .transpose()?
+            .unwrap_or(0);
 
-    fn encoded_len(&self) -> Result<usize> {
         let key_len = match self {
             #[cfg(feature = "alloc")]
             Self::Dsa(key) => key.encoded_len()?,
@@ -302,14 +342,16 @@ impl Encode for KeypairData {
             Self::SkEcdsaSha2NistP256(sk) => sk.encoded_len()?,
             #[cfg(feature = "alloc")]
             Self::SkEd25519(sk) => sk.encoded_len()?,
+            #[cfg(feature = "alloc")]
+            Self::Other(key) => key.encoded_len()?,
         };
 
-        Ok([self.algorithm()?.encoded_len()?, key_len].checked_sum()?)
+        [alg_len, key_len].checked_sum()
     }
 
-    fn encode(&self, writer: &mut impl Writer) -> Result<()> {
-        if !self.is_encrypted() {
-            self.algorithm()?.encode(writer)?;
+    fn encode(&self, writer: &mut impl Writer) -> encoding::Result<()> {
+        if let Ok(alg) = self.algorithm() {
+            alg.encode(writer)?;
         }
 
         match self {
@@ -326,6 +368,8 @@ impl Encode for KeypairData {
             Self::SkEcdsaSha2NistP256(sk) => sk.encode(writer)?,
             #[cfg(feature = "alloc")]
             Self::SkEd25519(sk) => sk.encode(writer)?,
+            #[cfg(feature = "alloc")]
+            Self::Other(key) => key.encode(writer)?,
         }
 
         Ok(())
@@ -352,6 +396,8 @@ impl TryFrom<&KeypairData> for public::KeyData {
             }
             #[cfg(feature = "alloc")]
             KeypairData::SkEd25519(sk) => public::KeyData::SkEd25519(sk.public().clone()),
+            #[cfg(feature = "alloc")]
+            KeypairData::Other(key) => public::KeyData::Other(key.into()),
         })
     }
 }

@@ -1,6 +1,6 @@
 //! OpenSSH certificate builder.
 
-use super::{unix_time::UnixTime, CertType, Certificate, Field, OptionsMap};
+use super::{CertType, Certificate, Field, OptionsMap};
 use crate::{
     public::{self, KeyData},
     PublicKey, Result, Signature, SigningKey,
@@ -12,7 +12,7 @@ use rand_core::CryptoRngCore;
 
 use core::future::Future;
 #[cfg(feature = "std")]
-use std::time::SystemTime;
+use {super::UnixTime, std::time::SystemTime};
 
 #[cfg(doc)]
 use crate::PrivateKey;
@@ -88,8 +88,8 @@ pub struct Builder {
     cert_type: Option<CertType>,
     key_id: Option<String>,
     valid_principals: Option<Vec<String>>,
-    valid_after: UnixTime,
-    valid_before: UnixTime,
+    valid_after: u64,
+    valid_before: u64,
     critical_options: OptionsMap,
     extensions: OptionsMap,
     comment: Option<String>,
@@ -109,12 +109,6 @@ impl Builder {
         valid_after: u64,
         valid_before: u64,
     ) -> Result<Self> {
-        let valid_after =
-            UnixTime::new(valid_after).map_err(|_| Field::ValidAfter.invalid_error())?;
-
-        let valid_before =
-            UnixTime::new(valid_before).map_err(|_| Field::ValidBefore.invalid_error())?;
-
         if valid_before < valid_after {
             return Err(Field::ValidBefore.invalid_error());
         }
@@ -149,7 +143,7 @@ impl Builder {
         let valid_before =
             UnixTime::try_from(valid_before).map_err(|_| Field::ValidBefore.invalid_error())?;
 
-        Self::new(nonce, public_key, valid_before.into(), valid_after.into())
+        Self::new(nonce, public_key, valid_after.into(), valid_before.into())
     }
 
     /// Create a new certificate builder, generating a random nonce using the
@@ -313,7 +307,7 @@ impl Builder {
 
         #[cfg(debug_assertions)]
         cert.validate_at(
-            cert.valid_after.into(),
+            cert.valid_after,
             &[cert.signature_key.fingerprint(Default::default())],
         )?;
 
