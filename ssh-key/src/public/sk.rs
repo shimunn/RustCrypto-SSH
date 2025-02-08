@@ -41,6 +41,13 @@ impl SkEcdsaSha2NistP256 {
         DEFAULT_APPLICATION_STRING
     }
 
+    /// Set the FIDO/U2F application.
+    #[cfg(not(feature = "alloc"))]
+    pub fn with_application(mut self, application: String) -> Self {
+        self.application = application;
+        self
+    }
+
     /// Get the FIDO/U2F application (typically `ssh:`).
     #[cfg(feature = "alloc")]
     pub fn application(&self) -> &str {
@@ -134,6 +141,13 @@ impl SkEd25519 {
     #[cfg(not(feature = "alloc"))]
     pub fn application(&self) -> &str {
         DEFAULT_APPLICATION_STRING
+    }
+
+    /// Set the FIDO/U2F application.
+    #[cfg(not(feature = "alloc"))]
+    pub fn with_application(mut self, application: String) -> Self {
+        self.application = application;
+        self
     }
 
     /// Get the FIDO/U2F application (typically `ssh:`).
