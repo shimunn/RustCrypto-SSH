@@ -43,6 +43,10 @@ const CERT_SK_ECDSA_SHA2_P256: &str = "sk-ecdsa-sha2-nistp256-cert-v01@openssh.c
 /// OpenSSH certificate for Ed25519 U2F/FIDO security key
 const CERT_SK_SSH_ED25519: &str = "sk-ssh-ed25519-cert-v01@openssh.com";
 
+/// OpenSSH certificate for ECDSA (NIST P-256) in Webauthn format
+const CERT_WEBAUTHN_SK_ECDSA_SHA2_P256: &str =
+    "webauthn-sk-ecdsa-sha2-nistp256-cert-v01@openssh.com";
+
 /// ECDSA with SHA-256 + NIST P-256
 const ECDSA_SHA2_P256: &str = "ecdsa-sha2-nistp256";
 
@@ -82,6 +86,9 @@ const SK_ECDSA_SHA2_P256: &str = "sk-ecdsa-sha2-nistp256@openssh.com";
 /// U2F/FIDO security key with Ed25519
 const SK_SSH_ED25519: &str = "sk-ssh-ed25519@openssh.com";
 
+/// Webauthn with ECDSA/NIST P-256
+const WEBAUTHN_SK_ECDSA_SHA2_P256: &str = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com";
+
 /// SSH key algorithms.
 ///
 /// This type provides a registry of supported digital signature algorithms
@@ -120,6 +127,9 @@ pub enum Algorithm {
     /// FIDO/U2F key with Ed25519
     SkEd25519,
 
+    /// Webauthn
+    WebauthnEcdsaSha2NistP256,
+
     /// Other
     #[cfg(feature = "alloc")]
     Other(AlgorithmName),
@@ -137,6 +147,7 @@ impl Algorithm {
     /// - `ssh-rsa`
     /// - `sk-ecdsa-sha2-nistp256@openssh.com` (FIDO/U2F key)
     /// - `sk-ssh-ed25519@openssh.com` (FIDO/U2F key)
+    /// - `webauthn-sk-ecdsa-sha2-nistp256@openssh.com`
     ///
     /// Any other algorithms are mapped to the [`Algorithm::Other`] variant.
     pub fn new(id: &str) -> Result<Self> {
@@ -158,6 +169,7 @@ impl Algorithm {
     /// - `ssh-ed25519-cert-v01@openssh.com`
     /// - `sk-ecdsa-sha2-nistp256-cert-v01@openssh.com` (FIDO/U2F key)
     /// - `sk-ssh-ed25519-cert-v01@openssh.com` (FIDO/U2F key)
+    /// - `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` (Browser generated)
     ///
     /// Any other algorithms are mapped to the [`Algorithm::Other`] variant.
     ///
@@ -178,6 +190,7 @@ impl Algorithm {
             CERT_RSA => Ok(Algorithm::Rsa { hash: None }),
             CERT_SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
             CERT_SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
+            CERT_WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::WebauthnEcdsaSha2NistP256),
             #[cfg(feature = "alloc")]
             _ => Ok(Algorithm::Other(AlgorithmName::from_certificate_type(id)?)),
             #[cfg(not(feature = "alloc"))]
@@ -202,6 +215,7 @@ impl Algorithm {
             },
             Algorithm::SkEcdsaSha2NistP256 => SK_ECDSA_SHA2_P256,
             Algorithm::SkEd25519 => SK_SSH_ED25519,
+            Algorithm::WebauthnEcdsaSha2NistP256 => WEBAUTHN_SK_ECDSA_SHA2_P256,
             #[cfg(feature = "alloc")]
             Algorithm::Other(algorithm) => algorithm.as_str(),
         }
@@ -227,6 +241,7 @@ impl Algorithm {
             Algorithm::Rsa { .. } => CERT_RSA,
             Algorithm::SkEcdsaSha2NistP256 => CERT_SK_ECDSA_SHA2_P256,
             Algorithm::SkEd25519 => CERT_SK_SSH_ED25519,
+            Algorithm::WebauthnEcdsaSha2NistP256 => CERT_WEBAUTHN_SK_ECDSA_SHA2_P256,
             Algorithm::Other(algorithm) => return algorithm.certificate_type(),
         }
         .to_owned()
@@ -298,6 +313,7 @@ impl str::FromStr for Algorithm {
             SSH_RSA => Ok(Algorithm::Rsa { hash: None }),
             SK_ECDSA_SHA2_P256 => Ok(Algorithm::SkEcdsaSha2NistP256),
             SK_SSH_ED25519 => Ok(Algorithm::SkEd25519),
+            WEBAUTHN_SK_ECDSA_SHA2_P256 => Ok(Algorithm::WebauthnEcdsaSha2NistP256),
             #[cfg(feature = "alloc")]
             _ => Ok(Algorithm::Other(AlgorithmName::from_str(id)?)),
             #[cfg(not(feature = "alloc"))]
