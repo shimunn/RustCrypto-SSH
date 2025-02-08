@@ -82,6 +82,7 @@ p384 = ["dep:p384", "ecdsa"]
 p521 = ["dep:p521", "ecdsa"]
 rsa = ["dep:bigint", "dep:rsa", "alloc", "rand_core"]
 tdes = ["cipher/tdes", "encryption"]
+serde = ["dep:serde"]
 
 [package.metadata.docs.rs]
 all-features = true

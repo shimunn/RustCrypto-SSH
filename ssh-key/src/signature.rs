@@ -570,7 +570,10 @@ impl Verifier<Signature> for public::SkEcdsaSha2NistP256 {
                 let (signature, webauthn_data) = WebauthnSignatureData::parse_signature(signature)
                     .map_err(signature::Error::from_source)?;
                 let signature = p256_signature_from_openssh_bytes(&signature)?;
-                verifying_key.verify(&webauthn_data.signed_data(message, &self.application())?, &signature)
+                verifying_key.verify(
+                    &webauthn_data.signed_data(message, &self.application())?,
+                    &signature,
+                )
             }
             _ => {
                 let (signature_bytes, flags_and_counter) = split_sk_signature(signature)?;
